@@ -29,7 +29,7 @@ def accuracy(output, target, topk=(1,)):
         return res
 
 
-def train(train_loader, model, criterion, optimizer, lr_scheduler, epoch, monitors, args):
+def train(train_loader, model, criterion, optimizer,thd_optimizer, lr_scheduler, epoch, monitors, args):
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
@@ -58,8 +58,10 @@ def train(train_loader, model, criterion, optimizer, lr_scheduler, epoch, monito
             lr_scheduler.step(epoch=epoch, batch=batch_idx)
 
         optimizer.zero_grad()
+        thd_optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        thd_optimizer.step()
 
         batch_time.update(time.time() - end_time)
         end_time = time.time()

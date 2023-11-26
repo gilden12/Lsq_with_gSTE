@@ -8,6 +8,30 @@ import process
 import quan
 import util
 from model import create_model
+from quan.quantizer import lsq
+import matplotlib.pyplot as plt
+import numpy as np
+def out_graphs():
+
+    y1 = []
+    for p in lsq.x:
+        y1.append(p)
+    x1 = [i for i in range(1, len(y1))]
+    plt.figure(figsize=(8, 6))
+    plt.plot(x1, y1[1:len(y1)], linestyle='-', label='learned Qp')
+
+    y2 = []
+    for p in lsq.thd_list:
+        y2.append(p)
+
+    x2 = [i for i in range(1, len(y2) + 1)]
+    plt.plot(x2, y2, linestyle='-', label='Normal Qp')
+    plt.title('learned Qp vs Normal Qp')  # Set the plot title
+    plt.xlabel('Steps')  # Set the X-axis label
+    plt.ylabel('Values')  # Set the Y-axis label
+    plt.grid(True)  # Add a grid
+    plt.legend()
+    plt.show()
 
 
 def main():
@@ -55,7 +79,7 @@ def main():
 
     modules_to_replace = quan.find_modules_to_quantize(model, args.quan)
     model = quan.replace_module_by_names(model, modules_to_replace)
-    tbmonitor.writer.add_graph(model, input_to_model=train_loader.dataset[0][0].unsqueeze(0))
+    #tbmonitor.writer.add_graph(model, input_to_model=train_loader.dataset[0][0].unsqueeze(0))
     logger.info('Inserted quantizers into the original model')
 
     if args.device.gpu and not args.dataloader.serialized:
@@ -72,10 +96,16 @@ def main():
     criterion = t.nn.CrossEntropyLoss().to(args.device.type)
 
     # optimizer = t.optim.Adam(model.parameters(), lr=args.optimizer.learning_rate)
-    optimizer = t.optim.SGD(model.parameters(),
+
+    #to work properly need to remove the s parameter from thd_params
+    thd_parameters = [p for p in model.parameters() if (p.shape[0]==1 and (p.data==3 or p.data==7))]
+    parameters = [p for p in model.parameters() if (p.shape[0]!=1 or (p.shape[0]==1 or p.data==1))]
+    #print("t1: ",thd_parameters)
+    optimizer = t.optim.SGD(parameters,
                             lr=args.optimizer.learning_rate,
                             momentum=args.optimizer.momentum,
                             weight_decay=args.optimizer.weight_decay)
+    thd_optimizer = t.optim.SGD(thd_parameters, lr=1e9)
     lr_scheduler = util.lr_scheduler(optimizer,
                                      batch_size=train_loader.batch_size,
                                      num_samples=len(train_loader.sampler),
@@ -95,7 +125,7 @@ def main():
             perf_scoreboard.update(top1, top5, start_epoch - 1)
         for epoch in range(start_epoch, args.epochs):
             logger.info('>>>>>>>> Epoch %3d' % epoch)
-            t_top1, t_top5, t_loss = process.train(train_loader, model, criterion, optimizer,
+            t_top1, t_top5, t_loss = process.train(train_loader, model, criterion, optimizer,thd_optimizer,
                                                    lr_scheduler, epoch, monitors, args)
             v_top1, v_top5, v_loss = process.validate(val_loader, model, criterion, epoch, monitors, args)
 
@@ -113,7 +143,9 @@ def main():
     tbmonitor.writer.close()  # close the TensorBoard
     logger.info('Program completed successfully ... exiting ...')
     logger.info('If you have any questions or suggestions, please visit: github.com/zhutmost/lsq-net')
-
+    out_graphs()
 
 if __name__ == "__main__":
     main()
+
+
