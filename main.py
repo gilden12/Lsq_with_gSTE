@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 import torch as t
+print(t.cuda.is_available(),"vhe")
 import yaml
 
 import process
@@ -11,6 +12,10 @@ from model import create_model
 from quan.quantizer import lsq
 import matplotlib.pyplot as plt
 import numpy as np
+from quan.quantizer.lsq import *
+from functools import partial
+
+
 def out_graphs():
 
     y1 = []
@@ -33,6 +38,46 @@ def out_graphs():
     plt.legend()
     plt.show()
 
+def a_graphs_full(alphas_list_full):
+    count=0
+    lcount=[]
+    for x, y in np.ndindex((6, 7)):
+        lcount.append([x,y])
+
+    figure, axis = plt.subplots(6, 7)
+    for name in alphas_list_full:
+        x1 = [i for i in range(1, len(alphas_list_full[name]) + 1)]
+        #plt.figure(figsize=(8, 6))
+        #plt.plot(x1, alphas_list_full[name], linestyle='-',label= ('Mx Value','Alpha Value'))
+        #plt.title('Alpha vs MX '+name)  # Set the plot title
+        #plt.xlabel('Steps')  # Set the X-axis label
+        #plt.ylabel('Values')  # Set the Y-axis label
+        #plt.grid(True)  # Add a grid
+        #plt.legend()
+        axis[lcount[count][0],lcount[count][1]].plot(x1, alphas_list_full[name], linestyle='-',label= ('Normal','learn a'))
+        #axis[lcount[count][0], lcount[count][1]].set_title('Alpha vs MX')
+        axis[lcount[count][0], lcount[count][1]].legend()
+        #axis[lcount[count][0], lcount[count][1]].set_ylim(0.9,1.1)
+        count+=1
+
+    plt.show()
+
+    count = 0
+    lcount = []
+    for x, y in np.ndindex((6, 7)):
+        lcount.append([x, y])
+
+    figure, axis = plt.subplots(6, 7)
+    for name in alphas_list_full:
+        x1 = [i for i in range(1, len(alphas_list_full[name]) + 1)]
+
+        axis[lcount[count][0], lcount[count][1]].plot(x1, alphas_list_full[name], linestyle='-',
+                                                      label=('Normal', 'learn a'))
+        axis[lcount[count][0], lcount[count][1]].legend()
+        axis[lcount[count][0], lcount[count][1]].set_ylim(0.9,1.1)
+        count += 1
+
+    plt.show()
 
 def main():
     script_dir = Path.cwd()
@@ -97,15 +142,26 @@ def main():
 
     # optimizer = t.optim.Adam(model.parameters(), lr=args.optimizer.learning_rate)
 
+    a_params_list=[]
+    other_params_list=[]
+    for name, param in model.named_parameters():
+        if name.endswith("a"):
+            a_params_list.append(param)
+            print (" params are : ",name, param.data)
+        else:
+            other_params_list.append(param)
     #to work properly need to remove the s parameter from thd_params
-    thd_parameters = [p for p in model.parameters() if (p.shape[0]==1 and (p.data==3 or p.data==7))]
-    parameters = [p for p in model.parameters() if (p.shape[0]!=1 or (p.shape[0]==1 or p.data==1))]
+    #thd_parameters = [p for p in model.parameters() if (p.shape[0]==1 and (p.data==3 or p.data==7))]
+    #parameters = [p for p in model.parameters() if (p.shape[0]!=1 or (p.shape[0]==1 or p.data==1))]
     #print("t1: ",thd_parameters)
-    optimizer = t.optim.SGD(parameters,
+    optimizer = t.optim.SGD(other_params_list,
                             lr=args.optimizer.learning_rate,
                             momentum=args.optimizer.momentum,
                             weight_decay=args.optimizer.weight_decay)
-    thd_optimizer = t.optim.SGD(thd_parameters, lr=1e9)
+    a_optimizer = t.optim.SGD(a_params_list, lr=1e1)
+
+    thd_optimizer=None
+
     lr_scheduler = util.lr_scheduler(optimizer,
                                      batch_size=train_loader.batch_size,
                                      num_samples=len(train_loader.sampler),
@@ -114,6 +170,28 @@ def main():
     logger.info('LR scheduler: %s\n' % lr_scheduler)
 
     perf_scoreboard = process.PerformanceScoreboard(args.log.num_best_scores)
+
+
+    cached_grads_alpha = {}
+    handlers = []
+
+    def hook(name, module, grad_input, grad_output):
+        if name not in cached_grads_alpha:
+            cached_grads_alpha[name] = []
+        # Meanwhile store data in the RAM.
+        # if module.alpha.grad is not None and module.alpha.grad>0:
+        #    breakpoint()
+        cached_grads_alpha[name].append(
+            (1, module.a.detach().abs().item()))
+        # print(name)
+
+    for name, m in model.named_modules():
+        if isinstance(m, LsqQuan):
+            handlers.append(m.register_full_backward_hook(partial(hook, name)))
+
+
+    print("len of alphlist = ",len(handlers))
+
 
     if args.eval:
         process.validate(test_loader, model, criterion, -1, monitors, args)
@@ -125,7 +203,7 @@ def main():
             perf_scoreboard.update(top1, top5, start_epoch - 1)
         for epoch in range(start_epoch, args.epochs):
             logger.info('>>>>>>>> Epoch %3d' % epoch)
-            t_top1, t_top5, t_loss = process.train(train_loader, model, criterion, optimizer,thd_optimizer,
+            t_top1, t_top5, t_loss = process.train(train_loader, model, criterion, optimizer,a_optimizer,
                                                    lr_scheduler, epoch, monitors, args)
             v_top1, v_top5, v_loss = process.validate(val_loader, model, criterion, epoch, monitors, args)
 
@@ -143,9 +221,9 @@ def main():
     tbmonitor.writer.close()  # close the TensorBoard
     logger.info('Program completed successfully ... exiting ...')
     logger.info('If you have any questions or suggestions, please visit: github.com/zhutmost/lsq-net')
+    a_graphs_full(cached_grads_alpha)
     out_graphs()
+
 
 if __name__ == "__main__":
     main()
-
-

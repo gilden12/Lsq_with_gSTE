@@ -24,12 +24,12 @@ def accuracy(output, target, topk=(1,)):
 
         res = []
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
 
-def train(train_loader, model, criterion, optimizer,thd_optimizer, lr_scheduler, epoch, monitors, args):
+def train(train_loader, model, criterion, optimizer,a_optimizer, lr_scheduler, epoch, monitors, args):
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
@@ -58,10 +58,12 @@ def train(train_loader, model, criterion, optimizer,thd_optimizer, lr_scheduler,
             lr_scheduler.step(epoch=epoch, batch=batch_idx)
 
         optimizer.zero_grad()
-        thd_optimizer.zero_grad()
+        a_optimizer.zero_grad()
+
         loss.backward()
         optimizer.step()
-        thd_optimizer.step()
+        a_optimizer.step()
+
 
         batch_time.update(time.time() - end_time)
         end_time = time.time()
