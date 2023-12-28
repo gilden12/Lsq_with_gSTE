@@ -1,5 +1,5 @@
 # LSQ-Net: Learned Step Size Quantization
-
+##This is the old README file for lsq-net
 ## Introduction
 
 This is an unofficial implementation of LSQ-Net, a deep neural network quantization framework.
