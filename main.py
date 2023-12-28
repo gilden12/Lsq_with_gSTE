@@ -2,7 +2,6 @@ import logging
 from pathlib import Path
 
 import torch as t
-print(t.cuda.is_available(),"vhe")
 import yaml
 
 import process
@@ -16,8 +15,7 @@ from quan.quantizer.lsq import *
 from functools import partial
 
 
-def out_graphs():
-
+def out_graphs(model):
     y1 = []
     for p in lsq.x:
         y1.append(p)
@@ -37,6 +35,10 @@ def out_graphs():
     plt.grid(True)  # Add a grid
     plt.legend()
     plt.show()
+
+    for name, m in model.named_modules():
+        if isinstance(m, LsqQuan):
+            print("layer name: ",name," mean of the input to the layer: ",m.mean_of_input," a value: ",m.a)
 
 def a_graphs_full(alphas_list_full):
     count=0
@@ -71,10 +73,12 @@ def a_graphs_full(alphas_list_full):
     for name in alphas_list_full:
         x1 = [i for i in range(1, len(alphas_list_full[name]) + 1)]
 
+        axis[lcount[count][0], lcount[count][1]].set_yscale('log')
+
         axis[lcount[count][0], lcount[count][1]].plot(x1, alphas_list_full[name], linestyle='-',
                                                       label=('Normal', 'learn a'))
         axis[lcount[count][0], lcount[count][1]].legend()
-        axis[lcount[count][0], lcount[count][1]].set_ylim(0.9,1.1)
+        #axis[lcount[count][0], lcount[count][1]].set_ylim(0.9,1.1)
         count += 1
 
     plt.show()
@@ -158,6 +162,7 @@ def main():
                             lr=args.optimizer.learning_rate,
                             momentum=args.optimizer.momentum,
                             weight_decay=args.optimizer.weight_decay)
+    #Here you can change the leraning rate of a
     a_optimizer = t.optim.SGD(a_params_list, lr=1e1)
 
     thd_optimizer=None
@@ -222,7 +227,7 @@ def main():
     logger.info('Program completed successfully ... exiting ...')
     logger.info('If you have any questions or suggestions, please visit: github.com/zhutmost/lsq-net')
     a_graphs_full(cached_grads_alpha)
-    out_graphs()
+    out_graphs(model)
 
 
 if __name__ == "__main__":

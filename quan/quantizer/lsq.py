@@ -111,7 +111,6 @@ class Calc_grad_a_STE(InplaceFunction):
     @staticmethod
     def backward(ctx, grad_output):
         a, = ctx.saved_tensors
-        #print(" whats size : ",save_gradients.get_grad(ctx.name).size()," 2 : ",save_gradients.get_mult(ctx.name).size())
         a_grad = -1 * (grad_output * a) * t.sum(save_gradients.get_grad(ctx.name)*save_gradients.get_mult(ctx.name), dim=0) * 0.01
 
         return grad_output * a, a_grad, None
@@ -210,6 +209,7 @@ class LsqQuan(Quantizer):
         save_gradients.update_grad(self.name,t.nn.Parameter(t.ones(1)))
         save_gradients.update_mult(self.name, t.nn.Parameter(t.ones(1)))
         self.is_weight=False
+        self.mean_of_input=0
         if all_positive:
             assert not symmetric, "Positive quantization cannot be symmetric"
             # unsigned activation is quantized to [0, 2^b-1]
@@ -302,6 +302,7 @@ class LsqQuan(Quantizer):
 
     def forward(self, x):#with learn a gdtuo
         #learn STE
+        self.mean_of_input=x.mean()
         if self.per_channel:
             s_grad_scale = 1.0 / ((self.thd_pos * x.numel()) ** 0.5)
         else:

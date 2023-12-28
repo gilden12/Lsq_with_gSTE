@@ -1,3 +1,6 @@
+#This file contains old implementaiton that I am saving for possible future use
+
+
 import torch as t
 import copy
 import numpy as np
@@ -6,6 +9,9 @@ import numpy as np
 from .quantizer import Quantizer
 from torch.autograd.function import InplaceFunction
 from torch.autograd.variable import Variable
+
+
+
 
 def grad_scale(x, scale):
     y = x
