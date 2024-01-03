@@ -60,44 +60,21 @@ class Save_prev_params(InplaceFunction):
         sdivx=1/xdivs
         save_gradients.update_grad(ctx.name, grad_output)
 
-        mult_calc=t.where(xdivs.ge((ctx.Qn+0.5*xdivs)/a)*xdivs.le((ctx.Qp-0.5*xdivs)/a),1,0)
+        a_tensor=t.full(sdivx.size(),a.item()).cuda()
 
-        mult_calc = t.where(xdivs.ge((ctx.Qp - 0.5 * xdivs) / a)*xdivs.le((ctx.Qp) / a), (-1 - a), mult_calc)
+        checkge0 = xdivs.ge(0)
 
-        mult_calc = t.where(xdivs.ge((ctx.Qp) / a)*xdivs.le((ctx.Qp + 0.5 * xdivs) / a) , (-a), mult_calc)
+        mult_calc = t.where(checkge0*a_tensor.le(ctx.Qp*sdivx-0.5), 1, 0)
+        mult_calc = t.where(checkge0*a_tensor.le(ctx.Qp*sdivx)*a_tensor.ge(ctx.Qp*sdivx-0.5), (1 + a), mult_calc)
+        mult_calc = t.where(checkge0*a_tensor.le(ctx.Qp*sdivx+0.5)*a_tensor.ge(ctx.Qp*sdivx), a, mult_calc)
 
-        mult_calc = t.where(xdivs.ge((ctx.Qn) / a)*xdivs.le((ctx.Qn + 0.5 * xdivs) / a), (1 + a), mult_calc)
-
-        mult_calc = t.where(xdivs.ge((ctx.Qn - 0.5 * xdivs) / a)*xdivs.le((ctx.Qn) / a), (a), mult_calc)
-
-        #mult_calc=t.where(xdivs>(ctx.Qn+0.5*xdivs)/a,1,0)
-        #mult_calc_prev = t.where(xdivs<(ctx.Qp-0.5*xdivs)/a,mult_calc*1,0)
-
-        #mult_calc=t.where(xdivs > (ctx.Qp - 0.5 * xdivs) / a , mult_calc_prev+(-1-a), mult_calc_prev)
-        #mult_calc_prev=t.where(xdivs < (ctx.Qp) / a, mult_calc, mult_calc_prev)
-
-        #mult_calc = t.where(xdivs > (ctx.Qp) / a , mult_calc_prev + (-a), mult_calc_prev)
-        #mult_calc_prev = t.where(xdivs < (ctx.Qp + 0.5 * xdivs) / a, mult_calc, mult_calc_prev)
-
-        #mult_calc = t.where(xdivs > (ctx.Qn) / a, mult_calc_prev + (1 + a), mult_calc_prev)
-        #mult_calc_prev = t.where(xdivs < (ctx.Qn + 0.5 * xdivs) / a, mult_calc, mult_calc_prev)
-
-        #mult_calc = t.where(xdivs > (ctx.Qn - 0.5 * xdivs) / a, mult_calc_prev + (a), mult_calc_prev)
-        #mult_calc = t.where(xdivs < (ctx.Qn) / a, mult_calc, mult_calc_prev)
+        checkle0 = xdivs.le(0)
+        mult_calc = t.where(checkle0 * a_tensor.le(ctx.Qn * sdivx - 0.5), 1, mult_calc)
+        mult_calc = t.where(checkle0 * a_tensor.le(ctx.Qn * sdivx) * a_tensor.ge(ctx.Qn * sdivx - 0.5), (1 + a), mult_calc)
+        mult_calc = t.where(checkle0 * a_tensor.le(ctx.Qn * sdivx + 0.5) * a_tensor.ge(ctx.Qn * sdivx), a, mult_calc)
 
         save_gradients.update_mult(ctx.name, mult_calc)
-        #if a>ctx.Qn*sdivx+0.5 and a<ctx.Qp*sdivx-0.5:
-        #    save_gradients.update_mult(ctx.name, 1)
-        #elif a>ctx.Qp*sdivx-0.5 and a<ctx.Qp*sdivx:
-        #    save_gradients.update_mult(ctx.name, -1-a)
-        #elif a>ctx.Qp*sdivx and a<ctx.Qp*sdivx+0.5:
-        #    save_gradients.update_mult(ctx.name, -a)
-        #elif a>ctx.Qn*sdivx and a<ctx.Qn*sdivx+0.5:
-        #    save_gradients.update_mult(ctx.name, 1+a)
-        #elif a>ctx.Qn*sdivx-0.5 and a<ctx.Qn*sdivx:
-        #    save_gradients.update_mult(ctx.name, a)
-        #else:
-        #    save_gradients.update_mult(ctx.name, 0)
+
         return None , None, None,None,None,None
 
 class Calc_grad_a_STE(InplaceFunction):
