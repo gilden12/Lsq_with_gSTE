@@ -6,7 +6,7 @@ import time
 import torch as t
 
 from util import AverageMeter
-
+import main
 __all__ = ['train', 'validate', 'PerformanceScoreboard']
 
 logger = logging.getLogger()
@@ -28,7 +28,7 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
-
+a_optimizer_lr=main.a_opt_lr
 def train(train_loader, model, criterion, optimizer,a_optimizer, lr_scheduler, epoch, monitors, args):
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -56,6 +56,20 @@ def train(train_loader, model, criterion, optimizer,a_optimizer, lr_scheduler, e
 
         if lr_scheduler is not None:
             lr_scheduler.step(epoch=epoch, batch=batch_idx)
+
+        is_a_warmup=1
+
+        if epoch==0 and is_a_warmup==1:
+            n=600
+            if batch_idx <=n:
+                for g in a_optimizer.param_groups:
+                    g['lr'] = (batch_idx) *(1/(n))*a_optimizer_lr
+
+        if epoch==0 and is_a_warmup==2:
+            n=200
+            if batch_idx <=n:
+                for g in a_optimizer.param_groups:
+                    g['lr'] = (batch_idx** 2) *(1/(n ** 2))*a_optimizer_lr
 
         optimizer.zero_grad()
         a_optimizer.zero_grad()

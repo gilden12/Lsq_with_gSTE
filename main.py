@@ -13,9 +13,42 @@ import matplotlib.pyplot as plt
 import numpy as np
 from quan.quantizer.lsq import *
 from functools import partial
+import math
+import random
+import os
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+from packaging.version import parse, Version
 
 
-def out_graphs(model):
+def set_global_seed(seed: int) -> None:
+    """
+    Sets random seed into PyTorch, TensorFlow, Numpy and Random.
+
+    Args:
+        seed: random seed
+    """
+    try:
+        import torch
+    except ImportError:
+        pass
+    else:
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    try:
+        import tensorflow as tf
+    except ImportError:
+        pass
+    else:
+        if parse(tf.__version__) >= Version("2.0.0"):
+            tf.random.set_seed(seed)
+        elif parse(tf.__version__) <= Version("1.13.2"):
+            tf.set_random_seed(seed)
+        else:
+            tf.compat.v1.set_random_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+def out_graphs(model,flip_count):
     y1 = []
     for p in lsq.x:
         y1.append(p)
@@ -37,18 +70,50 @@ def out_graphs(model):
     plt.show()
 
     for name, m in model.named_modules():
-        if isinstance(m, LsqQuan):
-            print("layer name: ",name," mean of the input to the layer: ",m.mean_of_input," a value: ",m.a)
+        if isinstance(m, LsqQuan) and m.is_weight:
+            print("layer name: ",name," mean of the input to the layer: ",m.mean_of_input," a value: ",m.a," osc counter: ",m.osc_counter)
+
+            a_vals=m.a.detach().cpu()
+            a_vals=t.reshape(a_vals,(-1,))
+            a_vals=a_vals[0:(math.floor(a_vals.numel()**0.5)**2)]
+            a_vals=t.reshape(a_vals,(math.floor(a_vals.numel()**0.5),math.floor(a_vals.numel()**0.5)))
+            #plt.hist(a_vals)
+            #plt.show()
+            bar=plt.imshow(a_vals)
+            plt.title('a values:')
+            plt.colorbar(bar)
+            plt.show()
+            flip_vals = flip_count[name]
+            flip_vals = t.reshape(flip_vals, (-1,))
+            flip_vals = flip_vals[0:(math.floor(flip_vals.numel() ** 0.5) ** 2)]
+            flip_vals = t.reshape(flip_vals, (math.floor(flip_vals.numel() ** 0.5), math.floor(flip_vals.numel() ** 0.5)))
+            # plt.hist(a_vals)
+            # plt.show()
+            bar = plt.imshow(flip_vals)
+            plt.title('flip counter values:')
+            plt.colorbar(bar)
+            plt.show()
+            osc_vals = m.osc_counter.detach().cpu()
+            osc_vals = t.reshape(osc_vals, (-1,))
+            osc_vals = osc_vals[0:(math.floor(osc_vals.numel() ** 0.5) ** 2)]
+            osc_vals = t.reshape(osc_vals, (math.floor(osc_vals.numel() ** 0.5), math.floor(osc_vals.numel() ** 0.5)))
+            # plt.hist(a_vals)
+            # plt.show()
+            bar = plt.imshow(osc_vals)
+            plt.title('osc counter values:')
+            plt.colorbar(bar)
+            plt.show()
 
 def a_graphs_full(alphas_list_full):
     count=0
     lcount=[]
-    for x, y in np.ndindex((6, 7)):
+    for x, y in np.ndindex((4, 5)):
         lcount.append([x,y])
 
-    figure, axis = plt.subplots(6, 7)
+    figure, axis = plt.subplots(4, 5)
     for name in alphas_list_full:
         x1 = [i for i in range(1, len(alphas_list_full[name]) + 1)]
+
         #plt.figure(figsize=(8, 6))
         #plt.plot(x1, alphas_list_full[name], linestyle='-',label= ('Mx Value','Alpha Value'))
         #plt.title('Alpha vs MX '+name)  # Set the plot title
@@ -56,6 +121,7 @@ def a_graphs_full(alphas_list_full):
         #plt.ylabel('Values')  # Set the Y-axis label
         #plt.grid(True)  # Add a grid
         #plt.legend()
+        #axis[lcount[count][0], lcount[count][1]].set_title(name)
         axis[lcount[count][0],lcount[count][1]].plot(x1, alphas_list_full[name], linestyle='-',label= ('Normal','learn a'))
         #axis[lcount[count][0], lcount[count][1]].set_title('Alpha vs MX')
         axis[lcount[count][0], lcount[count][1]].legend()
@@ -66,10 +132,10 @@ def a_graphs_full(alphas_list_full):
 
     count = 0
     lcount = []
-    for x, y in np.ndindex((6, 7)):
+    for x, y in np.ndindex((4, 5)):
         lcount.append([x, y])
 
-    figure, axis = plt.subplots(6, 7)
+    figure, axis = plt.subplots(4, 5)
     for name in alphas_list_full:
         x1 = [i for i in range(1, len(alphas_list_full[name]) + 1)]
 
@@ -82,8 +148,20 @@ def a_graphs_full(alphas_list_full):
         count += 1
 
     plt.show()
-
+a_opt_lr=1e4
 def main():
+    #Reproducability and comparisons
+    seed = 0
+    t.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    t.cuda.manual_seed_all(seed)
+    t.backends.cudnn.deterministic = True
+    t.backends.cudnn.benchmark = False
+
+    t.use_deterministic_algorithms(True)
+    set_global_seed(seed)
+
     script_dir = Path.cwd()
     args = util.get_config(default_file=script_dir / 'config.yaml')
 
@@ -151,7 +229,7 @@ def main():
     for name, param in model.named_parameters():
         if name.endswith("a"):
             a_params_list.append(param)
-            print (" params are : ",name, param.data)
+            #print (" params are : ",name, param.data)
         else:
             other_params_list.append(param)
     #to work properly need to remove the s parameter from thd_params
@@ -163,7 +241,7 @@ def main():
                             momentum=args.optimizer.momentum,
                             weight_decay=args.optimizer.weight_decay)
     #Here you can change the leraning rate of a
-    a_optimizer = t.optim.SGD(a_params_list, lr=1e1)
+    a_optimizer = t.optim.SGD(a_params_list, lr=a_opt_lr)
 
     thd_optimizer=None
 
@@ -187,13 +265,39 @@ def main():
         # if module.alpha.grad is not None and module.alpha.grad>0:
         #    breakpoint()
         cached_grads_alpha[name].append(
-            (1, module.a.detach().abs().item()))
+            (1, t.reshape(module.a.data.detach(),(-1,))[0].cpu() ))
         # print(name)
 
     for name, m in model.named_modules():
-        if isinstance(m, LsqQuan):
+        if isinstance(m, LsqQuan) and m.is_weight:
+            print(name)
             handlers.append(m.register_full_backward_hook(partial(hook, name)))
 
+    cached_prev_grad = {}
+    handlers_grad_flip = []
+    flip_count ={}
+    def check_grad_flip_hook(name, module, grad_input, grad_output):
+        if name not in cached_prev_grad:
+            cached_prev_grad[name] = t.zeros(1)
+            flip_count[name] = 0
+        #print("grad out put : ", grad_output)
+        if isinstance(grad_output[0],tuple):
+            #print("in here",grad_output[0])
+            where_flip=t.where(np.sign(grad_output.cpu()).ne(np.sign(cached_prev_grad[name])),1,0)
+            flip_count[name]=t.where(where_flip,flip_count[name]+1,0)
+            cached_prev_grad[name]=grad_output
+        else:
+            #print("in there",grad_output[0])
+
+            where_flip = t.where(t.sign(grad_output[0].cpu()).ne(t.sign(cached_prev_grad[name].cpu())), 1, 0)
+            #print(" where met ",where_flip)
+            flip_count[name] = t.where(where_flip.eq(1), flip_count[name] + 1, flip_count[name])
+            cached_prev_grad[name] = grad_output[0]
+
+    for name, m in model.named_modules():
+        if isinstance(m, LsqQuan) and m.is_weight:
+            print(name)
+            handlers_grad_flip.append(m.register_full_backward_hook(partial(check_grad_flip_hook, name)))
 
     print("len of alphlist = ",len(handlers))
 
@@ -227,7 +331,7 @@ def main():
     logger.info('Program completed successfully ... exiting ...')
     logger.info('If you have any questions or suggestions, please visit: github.com/zhutmost/lsq-net')
     a_graphs_full(cached_grads_alpha)
-    out_graphs(model)
+    out_graphs(model,flip_count)
 
 
 if __name__ == "__main__":
