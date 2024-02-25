@@ -25,6 +25,7 @@ def find_modules_to_quantize(model, quan_scheduler):
     replaced_modules = dict()
     for name, module in model.named_modules():
         if type(module) in QuanModuleMapping.keys():
+            #print(" modules to quan ",name)
             if name in quan_scheduler.excepts:
                 replaced_modules[name] = QuanModuleMapping[type(module)](
                     module,

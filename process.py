@@ -29,7 +29,9 @@ def accuracy(output, target, topk=(1,)):
         return res
 
 a_optimizer_lr=main.a_opt_lr
-def train(train_loader, model, criterion, optimizer,a_optimizer, lr_scheduler, epoch, monitors, args):
+def train(train_loader, model,using_gdtuo, criterion, optimizer,a_optimizer, lr_scheduler, epoch, monitors, args):
+    if using_gdtuo:
+        mw=model
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
@@ -43,10 +45,13 @@ def train(train_loader, model, criterion, optimizer,a_optimizer, lr_scheduler, e
     model.train()
     end_time = time.time()
     for batch_idx, (inputs, targets) in enumerate(train_loader):
+        #print(t.cuda.memory_summary(device=None, abbreviated=False))
+        if using_gdtuo:
+            mw.begin()
         inputs = inputs.to(args.device.type)
         targets = targets.to(args.device.type)
 
-        outputs = model(inputs)
+        outputs = model.forward(inputs)
         loss = criterion(outputs, targets)
 
         acc1, acc5 = accuracy(outputs.data, targets.data, topk=(1, 5))
@@ -57,27 +62,36 @@ def train(train_loader, model, criterion, optimizer,a_optimizer, lr_scheduler, e
         if lr_scheduler is not None:
             lr_scheduler.step(epoch=epoch, batch=batch_idx)
 
-        is_a_warmup=1
-
-        if epoch==0 and is_a_warmup==1:
-            n=600
-            if batch_idx <=n:
-                for g in a_optimizer.param_groups:
-                    g['lr'] = (batch_idx) *(1/(n))*a_optimizer_lr
-
-        if epoch==0 and is_a_warmup==2:
-            n=200
-            if batch_idx <=n:
-                for g in a_optimizer.param_groups:
-                    g['lr'] = (batch_idx** 2) *(1/(n ** 2))*a_optimizer_lr
-
+        # is_a_warmup=1
+        #
+        # if epoch==0 and is_a_warmup==1:
+        #     n=600
+        #     if batch_idx <=n:
+        #         for g in a_optimizer.param_groups:
+        #             g['lr'] = (batch_idx) *(1/(n))*a_optimizer_lr
+        #
+        # if epoch==0 and is_a_warmup==2:
+        #     n=200
+        #     if batch_idx <=n:
+        #         for g in a_optimizer.param_groups:
+        #             g['lr'] = (batch_idx** 2) *(1/(n ** 2))*a_optimizer_lr
+        #
         optimizer.zero_grad()
-        a_optimizer.zero_grad()
+        if using_gdtuo:
+            mw.zero_grad()
+        
+        #a_optimizer.zero_grad()
 
         loss.backward()
         optimizer.step()
-        a_optimizer.step()
-
+        if using_gdtuo:
+            mw.step()
+        #a_optimizer.step()
+        if False:
+            mw.zero_grad()
+            loss.backward(create_graph=True) # important! use create_graph=True
+            mw.step()
+            print("finished time")
 
         batch_time.update(time.time() - end_time)
         end_time = time.time()
@@ -116,7 +130,7 @@ def validate(data_loader, model, criterion, epoch, monitors, args):
             inputs = inputs.to(args.device.type)
             targets = targets.to(args.device.type)
 
-            outputs = model(inputs)
+            outputs = model.forward(inputs)
             loss = criterion(outputs, targets)
 
             acc1, acc5 = accuracy(outputs.data, targets.data, topk=(1, 5))

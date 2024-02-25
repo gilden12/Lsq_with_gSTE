@@ -18,7 +18,7 @@ import random
 import os
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 from packaging.version import parse, Version
-
+from util.gdtuo import *
 
 def set_global_seed(seed: int) -> None:
     """
@@ -148,8 +148,11 @@ def a_graphs_full(alphas_list_full):
         count += 1
 
     plt.show()
-a_opt_lr=1e4
+a_opt_lr=1
+using_gdtuo=True
 def main():
+    #print("Regular LSQ, Seed = 0")
+    print("getting LSQ SOTA")
     #Reproducability and comparisons
     seed = 0
     t.manual_seed(seed)
@@ -205,6 +208,7 @@ def main():
     model = create_model(args)
 
     modules_to_replace = quan.find_modules_to_quantize(model, args.quan)
+    modules_to_replace_temp=dict(modules_to_replace)
     model = quan.replace_module_by_names(model, modules_to_replace)
     #tbmonitor.writer.add_graph(model, input_to_model=train_loader.dataset[0][0].unsqueeze(0))
     logger.info('Inserted quantizers into the original model')
@@ -226,7 +230,9 @@ def main():
 
     a_params_list=[]
     other_params_list=[]
+    
     for name, param in model.named_parameters():
+        #print("param order check : ",name)
         if name.endswith("a"):
             a_params_list.append(param)
             #print (" params are : ",name, param.data)
@@ -242,6 +248,11 @@ def main():
                             weight_decay=args.optimizer.weight_decay)
     #Here you can change the leraning rate of a
     a_optimizer = t.optim.SGD(a_params_list, lr=a_opt_lr)
+    
+    #gdtuo support
+    optim = SGD_for_gSTE(0.01)
+    mw = ModuleWrapper(model, optim, modules_to_replace_temp)
+    mw.initialize()
 
     thd_optimizer=None
 
@@ -258,63 +269,64 @@ def main():
     cached_grads_alpha = {}
     handlers = []
 
-    def hook(name, module, grad_input, grad_output):
-        if name not in cached_grads_alpha:
-            cached_grads_alpha[name] = []
-        # Meanwhile store data in the RAM.
-        # if module.alpha.grad is not None and module.alpha.grad>0:
-        #    breakpoint()
-        cached_grads_alpha[name].append(
-            (1, t.reshape(module.a.data.detach(),(-1,))[0].cpu() ))
-        # print(name)
-
-    for name, m in model.named_modules():
-        if isinstance(m, LsqQuan) and m.is_weight:
-            print(name)
-            handlers.append(m.register_full_backward_hook(partial(hook, name)))
-
+    # def hook(name, module, grad_input, grad_output):
+    #     if name not in cached_grads_alpha:
+    #         cached_grads_alpha[name] = []
+    #     # Meanwhile store data in the RAM.
+    #     # if module.alpha.grad is not None and module.alpha.grad>0:
+    #     #    breakpoint()
+    #     cached_grads_alpha[name].append(
+    #         (1, t.reshape(module.a.data.detach(),(-1,))[0].cpu() ))
+    #     # print(name)
+    #
+    # for name, m in model.named_modules():
+    #     if isinstance(m, LsqQuan) and m.is_weight:
+    #         print(name)
+    #         handlers.append(m.register_full_backward_hook(partial(hook, name)))
+    #
     cached_prev_grad = {}
     handlers_grad_flip = []
     flip_count ={}
-    def check_grad_flip_hook(name, module, grad_input, grad_output):
-        if name not in cached_prev_grad:
-            cached_prev_grad[name] = t.zeros(1)
-            flip_count[name] = 0
-        #print("grad out put : ", grad_output)
-        if isinstance(grad_output[0],tuple):
-            #print("in here",grad_output[0])
-            where_flip=t.where(np.sign(grad_output.cpu()).ne(np.sign(cached_prev_grad[name])),1,0)
-            flip_count[name]=t.where(where_flip,flip_count[name]+1,0)
-            cached_prev_grad[name]=grad_output
-        else:
-            #print("in there",grad_output[0])
-
-            where_flip = t.where(t.sign(grad_output[0].cpu()).ne(t.sign(cached_prev_grad[name].cpu())), 1, 0)
-            #print(" where met ",where_flip)
-            flip_count[name] = t.where(where_flip.eq(1), flip_count[name] + 1, flip_count[name])
-            cached_prev_grad[name] = grad_output[0]
-
-    for name, m in model.named_modules():
-        if isinstance(m, LsqQuan) and m.is_weight:
-            print(name)
-            handlers_grad_flip.append(m.register_full_backward_hook(partial(check_grad_flip_hook, name)))
+    # def check_grad_flip_hook(name, module, grad_input, grad_output):
+    #     if name not in cached_prev_grad:
+    #         cached_prev_grad[name] = t.zeros(1)
+    #         flip_count[name] = 0
+    #     #print("grad out put : ", grad_output)
+    #     if isinstance(grad_output[0],tuple):
+    #         #print("in here",grad_output[0])
+    #         where_flip=t.where(np.sign(grad_output.cpu()).ne(np.sign(cached_prev_grad[name])),1,0)
+    #         flip_count[name]=t.where(where_flip,flip_count[name]+1,0)
+    #         cached_prev_grad[name]=grad_output
+    #     else:
+    #         #print("in there",grad_output[0])
+    #
+    #         where_flip = t.where(t.sign(grad_output[0].cpu()).ne(t.sign(cached_prev_grad[name].cpu())), 1, 0)
+    #         #print(" where met ",where_flip)
+    #         flip_count[name] = t.where(where_flip.eq(1), flip_count[name] + 1, flip_count[name])
+    #         cached_prev_grad[name] = grad_output[0]
+    #
+    # for name, m in model.named_modules():
+    #     if isinstance(m, LsqQuan) and m.is_weight:
+    #         print(name)
+    #         handlers_grad_flip.append(m.register_full_backward_hook(partial(check_grad_flip_hook, name)))
 
     print("len of alphlist = ",len(handlers))
 
-
+    if not using_gdtuo:
+        mw=model
     if args.eval:
-        process.validate(test_loader, model, criterion, -1, monitors, args)
+        process.validate(test_loader, mw, criterion, -1, monitors, args)
     else:  # training
         if args.resume.path or args.pre_trained:
             logger.info('>>>>>>>> Epoch -1 (pre-trained model evaluation)')
-            top1, top5, _ = process.validate(val_loader, model, criterion,
+            top1, top5, _ = process.validate(val_loader, mw, criterion,
                                              start_epoch - 1, monitors, args)
             perf_scoreboard.update(top1, top5, start_epoch - 1)
         for epoch in range(start_epoch, args.epochs):
             logger.info('>>>>>>>> Epoch %3d' % epoch)
-            t_top1, t_top5, t_loss = process.train(train_loader, model, criterion, optimizer,a_optimizer,
+            t_top1, t_top5, t_loss = process.train(train_loader, mw,using_gdtuo, criterion, optimizer,a_optimizer,
                                                    lr_scheduler, epoch, monitors, args)
-            v_top1, v_top5, v_loss = process.validate(val_loader, model, criterion, epoch, monitors, args)
+            v_top1, v_top5, v_loss = process.validate(val_loader, mw, criterion, epoch, monitors, args)
 
             tbmonitor.writer.add_scalars('Train_vs_Validation/Loss', {'train': t_loss, 'val': v_loss}, epoch)
             tbmonitor.writer.add_scalars('Train_vs_Validation/Top1', {'train': t_top1, 'val': v_top1}, epoch)
@@ -322,10 +334,10 @@ def main():
 
             perf_scoreboard.update(v_top1, v_top5, epoch)
             is_best = perf_scoreboard.is_best(epoch)
-            util.save_checkpoint(epoch, args.arch, model, {'top1': v_top1, 'top5': v_top5}, is_best, args.name, log_dir)
+            util.save_checkpoint(epoch, args.arch, mw, {'top1': v_top1, 'top5': v_top5}, is_best, args.name, log_dir)
 
         logger.info('>>>>>>>> Epoch -1 (final model evaluation)')
-        process.validate(test_loader, model, criterion, -1, monitors, args)
+        process.validate(test_loader, mw, criterion, -1, monitors, args)
 
     tbmonitor.writer.close()  # close the TensorBoard
     logger.info('Program completed successfully ... exiting ...')

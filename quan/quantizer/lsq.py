@@ -40,7 +40,8 @@ class split_grad(InplaceFunction):
 
     @staticmethod
     def backward(ctx, grad_output):
-
+        if grad_output == None:
+            print (" None here")
         return grad_output ,grad_output
 
 class Save_prev_params(InplaceFunction):
@@ -51,11 +52,15 @@ class Save_prev_params(InplaceFunction):
         ctx.name=name
         ctx.Qp=Qp
         ctx.Qn=Qn
+        ctx.sizex=x.shape
+        ctx.sizea=a.shape
 
         return x
 
     @staticmethod
     def backward(ctx, grad_output):
+        if grad_output == None:
+            print (" None here")
         a,xdivs=ctx.saved_tensors
         sdivx=1/xdivs
         save_gradients.update_grad(ctx.name, grad_output)
@@ -76,7 +81,35 @@ class Save_prev_params(InplaceFunction):
 
         save_gradients.update_mult(ctx.name, mult_calc)
 
-        return None , None, None,None,None,None
+        return t.zeros(ctx.sizex).cuda() , t.zeros(ctx.sizea).cuda(), None,None,None,None
+
+
+class grad_a(InplaceFunction):
+
+    @staticmethod
+    def forward(ctx, a,name,x,a_grad):
+        ctx.sizex=x.shape
+        ctx.save_for_backward(a_grad)
+        ctx.name=name
+        return x.detach()*a
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        if grad_output == None:
+            print (" None here")
+        a_grad, = ctx.saved_tensors
+        #a_grad = save_gradients.get_grad(ctx.name).cuda()*save_gradients.get_mult(ctx.name).cuda()
+
+        #where_flip = t.where(t.sign(grad_output).ne(t.sign(save_gradients.get_grad_for_flip(ctx.name))), 1, 0)
+        #new_flip_count = t.where(where_flip.eq(1), save_gradients.get_flip_count(ctx.name) + 1, 0)
+        #save_gradients.update_flip_count(ctx.name,new_flip_count)
+
+        #save_gradients.update_grad_for_flip(ctx.name,grad_output * a)
+        #print("grad_output.detach()*a_grad.detach() ",grad_output.detach()*a_grad.detach())
+        print("here 2 ")
+        #return grad_output.detach()*a_grad.detach(), None,t.zeros(ctx.sizex).cuda(),None
+        return t.ones(a_grad.shape).cuda(), None,t.zeros(ctx.sizex).cuda(),None
+
 
 class Calc_grad_a_STE(InplaceFunction):
 
@@ -84,26 +117,27 @@ class Calc_grad_a_STE(InplaceFunction):
     def forward(ctx, x , a,name):
         ctx.save_for_backward(a)
         ctx.name=name
+        #ctx.name=name
         return x
 
     @staticmethod
     def backward(ctx, grad_output):
+        #if grad_output == None:
+        #    print (" None here")
         a, = ctx.saved_tensors
-
-        a_grad = -1 * (grad_output * a) * save_gradients.get_grad(ctx.name).cuda()*save_gradients.get_mult(ctx.name).cuda() * 0.01
-
-        #where_flip = t.where(t.sign(grad_output).ne(t.sign(save_gradients.get_grad_for_flip(ctx.name))), 1, 0)
-        #new_flip_count = t.where(where_flip.eq(1), save_gradients.get_flip_count(ctx.name) + 1, 0)
-        #save_gradients.update_flip_count(ctx.name,new_flip_count)
-
-        #save_gradients.update_grad_for_flip(ctx.name,grad_output * a)
-        return grad_output * a, a_grad, None
+        #print("cehck nameeee : ",ctx.name)
+        a_grad = save_gradients.get_grad(ctx.name).cuda()*save_gradients.get_mult(ctx.name).cuda()
+        grad_out=grad_a.apply(a,ctx.name,grad_output.detach(),a_grad.detach())
+        print("here 1 ")
+        #grad_out=grad_output
+        return grad_out, t.zeros(a.shape).cuda(), None
 
 class Clamp_STE(InplaceFunction):
 
     @staticmethod
     def forward(ctx, i,x_parallel, min_val, max_val,a):
         #ctx._mask1 = (i.ge(min_val/a) * i.le(max_val/a))
+        ctx.shapea=a.shape
         maxdiva = max_val / a
         mindiva = min_val / a
         ctx._mask1 = i.ge(mindiva) * i.le(maxdiva)
@@ -112,11 +146,12 @@ class Clamp_STE(InplaceFunction):
 
     @staticmethod
     def backward(ctx, grad_output):
-
+        if grad_output == None:
+            print (" None here")
         mask1 = Variable(ctx._mask1.type_as(grad_output.data))
 
         mask2 = Variable(ctx._mask2.type_as(grad_output.data))
-        return grad_output * mask1,grad_output * mask2, None, None,None
+        return grad_output * mask1,grad_output * mask2, None, None,t.zeros(ctx.shapea).cuda()
 
 
 class save_gradients():
@@ -240,7 +275,7 @@ class LsqQuan(Quantizer):
         return x
 
 
-    def forward(self, x):#with learn a gdtuo
+    def forward(self, x):#with learn a gdtuo generalized optimizer
         #learn STE
         self.mean_of_input=x.mean()
         if self.per_channel:
@@ -250,13 +285,14 @@ class LsqQuan(Quantizer):
         s_scale = grad_scale(self.s, s_grad_scale)
 
         if self.is_weight:
-            self.check_oscillations(x)
+            #self.check_oscillations(x)
 
             x_parallel = x.detach()
             x_parallel = x_parallel / s_scale
             xdivs_save=x_parallel.detach()
-            x_prev = Save_prev_params.apply(x, self.a, self.name, xdivs_save, self.thd_pos, self.thd_neg)
+            x_prev=x.detach()
             x = Calc_grad_a_STE.apply(x,self.a,self.name)
+            x_prev = Save_prev_params.apply(x, self.a, self.name, xdivs_save, self.thd_pos, self.thd_neg)#changed the position to be after calc_grad
 
             x = x / s_scale.detach()
             x = Clamp_STE.apply(x,x_parallel, self.thd_neg, self.thd_pos,self.a)
@@ -272,5 +308,4 @@ class LsqQuan(Quantizer):
             x = x * s_scale
 
         return x
-
 
