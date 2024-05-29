@@ -1,6 +1,8 @@
 import torch as t
 import copy
 import numpy as np
+import torch.nn.functional as F
+import torch.nn as nn
 
 
 from .quantizer import Quantizer
@@ -139,12 +141,14 @@ class Calc_grad_a_STE(InplaceFunction):
         #    print("grad name is : ",ctx.name," grad is : ",grad_output)
         return a*grad_output.detach(), None, None
     
-class Calc_grad_a_STE_Meta(InplaceFunction):
+class Calc_grad_a_STE_meta(InplaceFunction):
 
     @staticmethod
-    def forward(ctx, x , a,b,name):
-        ctx.save_for_backward(a,b)
+    def forward(ctx, x , meta_network,name):
+        ctx.save_for_backward(x,)
+
         ctx.name=name
+        ctx.meta_network=meta_network
         #ctx.name=name
         return x
 
@@ -152,7 +156,35 @@ class Calc_grad_a_STE_Meta(InplaceFunction):
     def backward(ctx, grad_output):
         #if grad_output == None:
         #    print (" None here")
-        a,b = ctx.saved_tensors
+        x, = ctx.saved_tensors
+        #print("cehck nameeee : ",ctx.name)
+        #a_grad = save_gradients.get_grad(ctx.name).cuda()*save_gradients.get_mult(ctx.name).cuda()
+        #grad_out=grad_a.apply(a,ctx.name,grad_output.detach(),a_grad.detach())
+        #print("here 1 ")
+        #grad_out=grad_output
+        #if grad_output.sum() == 0 or grad_output == None:
+        #    print("grad name is : ",ctx.name," grad is : ",grad_output)
+        flatten_weight = x.view(-1,1).detach()
+        flatten_grad = grad_output.view(-1,1).detach()
+            
+        return ((ctx.meta_network(flatten_weight)*flatten_grad).reshape(grad_output.detach().shape)), None, None, None
+    
+class Calc_grad_a_STE_Meta(InplaceFunction):
+
+    @staticmethod
+    def forward(ctx,x, meta_network,name,a):
+        
+        ctx.save_for_backward(x,a)
+        ctx.name=name
+        ctx.meta_network=meta_network
+        #ctx.name=name
+        return x
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        #if grad_output == None:
+        #    print (" None here")
+        x,a = ctx.saved_tensors
         #print("cehck nameeee : ",ctx.name)
         #a_grad = save_gradients.get_grad(ctx.name).cuda()*save_gradients.get_mult(ctx.name).cuda()
         #grad_out=grad_a.apply(a,ctx.name,grad_output.detach(),a_grad.detach())
@@ -167,7 +199,14 @@ class Calc_grad_a_STE_Meta(InplaceFunction):
         #else:
         #    print("check here now")
         #print("b is : ",b.sum())
-        return a*grad_output.detach(), t.zeros(a.shape).cuda(), t.zeros(b.shape).cuda(), None
+        #grad_output=t.transpose(grad_output.flatten(), 0).detach()
+        #print("here done ",ctx.name)
+        #for name,param in ctx.meta_network.named_parameters():
+        #        print("grads of net in back : ",param.grad)
+        flatten_weight = x.view(-1,1).detach()
+        flatten_grad = grad_output.view(-1,1).detach()      
+        return ((ctx.meta_network(flatten_weight)*flatten_grad).reshape(grad_output.detach().shape)), None, None, None
+        #return a*grad_output.detach(), None, None,None
 
 class Clamp_STE(InplaceFunction):
 
@@ -285,6 +324,8 @@ class LsqQuan(Quantizer):
         self.num_solution=0
         self.T=0
         self.counter=0
+        self.meta_network = MetaMultiFC(100,False)
+        self.x_hat=t.nn.Parameter(t.ones(1))
     def update_strname(self,strname):
         self.strname=strname
     
@@ -300,12 +341,21 @@ class LsqQuan(Quantizer):
             #print("check dim : ",x.size()," check size : ",x.size())
             self.is_weight=True
             self.a=t.nn.Parameter(t.ones(x.size()))
+            self.x_hat=t.nn.Parameter(t.ones(x.size()))
             self.v_hat = t.nn.Parameter(t.ones(x.size()))
             if self.num_solution == 2:
                 my_list = [i for i in x.size()]
                 my_list=[self.T]+my_list
                 my_tupel=tuple(my_list)
                 self.a=t.nn.Parameter(t.ones(my_tupel))
+                
+            if self.num_solution == 7:
+                meta_copy=copy.deepcopy(self.meta_network)
+                a_list = t.nn.ModuleList()
+                for i in range(self.T):
+                    a_list.append(meta_copy)
+                    meta_copy=copy.deepcopy(self.meta_network)
+                self.meta_modules = a_list
             if self.num_solution == 1.5:
                 self.b = t.nn.Parameter(t.zeros(x.size()))
         else:
@@ -431,7 +481,8 @@ class LsqQuan(Quantizer):
             xdivs_save=x_parallel.detach()
             x_prev=x.detach()
             x = Calc_grad_a_STE.apply(x,self.a,self.name)
-            x_prev = Save_prev_params.apply(x, self.a, self.strname, xdivs_save, self.thd_pos, self.thd_neg)#changed the position to be after calc_grad
+            #x = Calc_grad_a_STE_Meta.apply(x,self.meta_network,self.name,self.a)
+            #x_prev = Save_prev_params.apply(x, self.a, self.strname, xdivs_save, self.thd_pos, self.thd_neg)#changed the position to be after calc_grad
             x = x / s_scale.detach()
             x = Clamp_STE.apply(x,x_parallel, self.thd_neg, self.thd_pos,self.a)
             x = round_pass(x)
@@ -448,6 +499,10 @@ class LsqQuan(Quantizer):
     
 
     def forward_delayed_updates_meta_quant(self, x):#original forward from lsq
+            #for name,param in self.meta_network.named_parameters():
+            #    print("grads of net before forward : ",param.grad)
+            #print("check s grad : ",self.s.grad )
+            #print("check x grad : ", x.grad )
             if self.per_channel:
                 if self.thd_pos !=0:
                     s_grad_scale = 1.0 / ((self.thd_pos * x.numel()) ** 0.5)
@@ -463,16 +518,11 @@ class LsqQuan(Quantizer):
 
             if self.is_weight:
                 
-                x_parallel = x.detach()
-                x_parallel = x_parallel / s_scale
-                xdivs_save=x_parallel.detach()
-                x_prev=x.detach()
-                x = Calc_grad_a_STE_Meta.apply(x,self.a,self.b,self.name)
-                x = x / s_scale.detach()
+                x = Calc_grad_a_STE_Meta.apply(x,self.meta_network,self.name,self.a)
+                x = x / s_scale
                 x = t.clamp(x, self.thd_neg, self.thd_pos)
                 x = round_pass(x)
                 x = x * s_scale
-                x = split_grad.apply(x,x_prev,self.v_hat) 
                 """x_parallel = x.detach()
                 x_parallel = x_parallel / s_scale
                 xdivs_save=x_parallel.detach()
@@ -515,7 +565,11 @@ class LsqQuan(Quantizer):
             x_parallel = x_parallel / s_scale
             xdivs_save=x_parallel.detach()
             x_prev=x.detach()
-            x = Calc_grad_a_STE.apply(x,self.a[self.counter%self.T],self.name)
+            if self.num_solution == 7:
+                #print(" in forward, count = ",self.counter," count%T = ",self.counter%self.T)
+                x = Calc_grad_a_STE_meta.apply(x,self.meta_modules[self.counter%self.T],self.name)
+            else:
+                x = Calc_grad_a_STE.apply(x,self.a[self.counter%self.T],self.name)
             #if self.counter%self.T == 0:
             #    print("Now equals zero !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             #if (self.counter%self.T)%10== 0 or (self.counter%self.T)==self.T-2 or (self.counter%self.T)==self.T-1 or (self.counter%self.T)==self.T-3:
@@ -535,13 +589,14 @@ class LsqQuan(Quantizer):
             #x_prev = Save_prev_params.apply(x, 1.0, self.strname, xdivs_save, self.thd_pos, self.thd_neg)#changed the position to be after calc_grad
             #x_prev = Save_prev_params.apply(x, self.a, self.strname, xdivs_save, self.thd_pos, self.thd_neg)#changed the position to be after calc_grad
             x = x / s_scale.detach()
-            x = Clamp_STE.apply(x,x_parallel, self.thd_neg, self.thd_pos,self.a[self.counter%self.T])
+            if self.num_solution == 7:
+                x = t.clamp(x, self.thd_neg, self.thd_pos)
+            else:
+                x = Clamp_STE.apply(x,x_parallel, self.thd_neg, self.thd_pos,self.a[self.counter%self.T])
             #x = Clamp_STE.apply(x,x_parallel, self.thd_neg, self.thd_pos,self.a)
             x = round_pass(x)
             x = x * s_scale
             x = split_grad.apply(x,x_prev,self.v_hat)
-            #print(self.counter)
-            #print(self.T)
             if t.is_grad_enabled():
                 self.counter+=1
             
@@ -553,7 +608,45 @@ class LsqQuan(Quantizer):
             x = x * s_scale
 
         return x
+    
 
+    def forward_baseline_no_quant(self, x):#original forward from lsq
+        #print("x.detach() ",self.x_hat)
+        if self.per_channel:
+            if self.thd_pos !=0:
+                s_grad_scale = 1.0 / ((self.thd_pos * x.numel()) ** 0.5)
+            else:
+                s_grad_scale=1.0
+        else:
+            if self.thd_pos !=0:
+                s_grad_scale = 1.0 / ((self.thd_pos * x.numel()) ** 0.5)
+            else:
+                s_grad_scale=1.0
+        s_scale = grad_scale(self.s, s_grad_scale)
+        if t.equal(t.ones(x.size()).to(device='cuda'),self.x_hat):
+            
+            x_original=x
+            x = x / s_scale
+            x = t.clamp(x, self.thd_neg, self.thd_pos)
+            x = round_pass(x)
+            
+            x = x * s_scale
+            self.x_hat.data =(x.detach())
+            if self.is_weight:
+                return self.x_hat
+            else:
+                return x_original
+        else:
+            if self.is_weight:
+                return self.x_hat
+            else:
+                x_original=x
+                x = x / s_scale
+
+                x = t.clamp(x, self.thd_neg, self.thd_pos)
+                x = round_pass(x)
+                x = x * s_scale
+                return x_original
 
         
 
@@ -564,17 +657,63 @@ class LsqQuan(Quantizer):
         if self.num_solution == -1:
             return self.forward_original( x)
         
-        elif self.num_solution == 0:
+        elif self.num_solution == 0 or self.num_solution == 5:
             return self.forward_analytical_gSTE( x)
-        
         elif self.num_solution == 1:
             return self.forward_delayed_updates( x)
-        elif self.num_solution == 1.5:
+        elif self.num_solution == 1.5 or self.num_solution == 6:
             return self.forward_delayed_updates_meta_quant(x)
-        elif self.num_solution == 2:
+        elif self.num_solution == 2 or self.num_solution == 7:
             return self.forward_all_times( x)
+        elif self.num_solution == 2 or self.num_solution == 7:
+            return self.forward_all_times( x)
+        elif self.num_solution == 8:
+            return self.forward_baseline_no_quant( x)
         
         else:
             print("Solution not defined")
         
+
+
+class simple_grad(InplaceFunction):
+
+    @staticmethod
+    def forward(ctx, x ):
+
+        return x.detach()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        
+        return grad_output.detach()
+
+class MetaMultiFC(nn.Module):
+
+    def __init__(self, hidden_size = 10, use_nonlinear=None):
+        super(MetaMultiFC, self).__init__()
+
+        self.linear1 = nn.Linear(in_features=1, out_features=hidden_size, bias=False)
+        self.linear2 = nn.Linear(in_features=hidden_size, out_features=hidden_size, bias=False)
+        self.linear3 = nn.Linear(in_features=hidden_size, out_features=1, bias=False)
+
+        self.use_nonlinear = use_nonlinear
+
+    def forward(self, x):
+        x = self.linear1(x)
+        #print("INSIDE metA ",x)  
+        #x = simple_grad.apply(x)
+        # if self.use_nonlinear == 'relu':
+        #     x = F.relu(x)
+        # elif self.use_nonlinear == 'tanh':
+        #     x = t.tanh(x)
+        # x = self.linear2(x)
+        # if self.use_nonlinear == 'relu':
+        #     x = F.relu(x)
+        # elif self.use_nonlinear == 'tanh':
+        #     x = t.tanh(x)
+        x = self.linear3(x)
+
+
+
+        return x
 

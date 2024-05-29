@@ -76,7 +76,7 @@ quan:
     # Quantizer type (choices: lsq)
     mode: lsq
     # Bit width of quantized activation
-    bit: 3
+    bit: 2
     # Each output channel uses its own scaling factor
     per_channel: false
     # Whether to use symmetric quantization
@@ -87,7 +87,7 @@ quan:
     # Quantizer type (choices: lsq)
     mode: lsq
     # Bit width of quantized weight
-    bit: 3
+    bit: 2
     # Each output channel uses its own scaling factor
     per_channel: true
     # Whether to use symmetric quantization
@@ -113,7 +113,7 @@ quan:
 # If this field is true, all the bellowing options will be ignored
 eval: false
 
-epochs: 2
+epochs: 100
 
 optimizer:
   learning_rate: 0.01

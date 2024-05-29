@@ -97,6 +97,7 @@ def train_analytical(train_loader, model,using_gdtuo, criterion, optimizer,a_opt
     model.train()
     end_time = time.time()
     for batch_idx, (inputs, targets) in enumerate(train_loader):
+        #print("cehck 4 :",t.cuda.memory_summary(device=None, abbreviated=False))
         #print(t.cuda.memory_summary(device=None, abbreviated=False))
         for name, module in model.named_modules():
             #if "conv" in name:
@@ -108,7 +109,6 @@ def train_analytical(train_loader, model,using_gdtuo, criterion, optimizer,a_opt
         targets = targets.to(args.device.type)
 
 
-                
         outputs = model.forward(inputs)
         loss = criterion(outputs, targets)
 
@@ -165,6 +165,7 @@ def train_analytical(train_loader, model,using_gdtuo, criterion, optimizer,a_opt
             loss.backward(create_graph=True) # important! use create_graph=True
             #print("calling step")
             mw.step_w()
+            
         
         if False:
             mw.zero_grad()
@@ -184,7 +185,6 @@ def train_analytical(train_loader, model,using_gdtuo, criterion, optimizer,a_opt
                     'BatchTime': batch_time,
                     'LR': optimizer.param_groups[0]['lr']
                 })
-
     logger.info('==> Top1: %.3f    Top5: %.3f    Loss: %.3f\n',
                 top1.avg, top5.avg, losses.avg)
     return top1.avg, top5.avg, losses.avg
@@ -208,7 +208,7 @@ def train_DelayedUpdates(train_loader, model,num_solution, criterion, optimizer,
     step_counter = 0
     prev_grads = {}
     for batch_idx, (inputs, targets) in enumerate(train_loader):
-        #print(t.cuda.memory_summary(device=None, abbreviated=False))
+        #print("beggining of batch loop : ",t.cuda.memory_summary(device=None, abbreviated=False))
         mw.begin()
         inputs = inputs.to(args.device.type)
         targets = targets.to(args.device.type)
@@ -226,22 +226,35 @@ def train_DelayedUpdates(train_loader, model,num_solution, criterion, optimizer,
             lr_scheduler.step(epoch=epoch, batch=batch_idx)
 
         
-        
-        if train_DelayedUpdates.counter % 2 ==1:
+        if num_solution ==6:
+
             mw.zero_grad()
-           
             loss.backward(create_graph=True)
             mw.step_w()
 
-        if train_DelayedUpdates.counter % 2 ==0:
-            mw.zero_grad()
-            loss.backward(create_graph=True)
-            mw.step_w()
-            if not( (epoch==0) and (batch_idx==0)):
-                if num_solution==1.5:
-                    mw.step_a_and_b()
-                else:
-                    mw.step_a()
+            if train_DelayedUpdates.counter % 2 ==1:
+                mw.step_meta()
+            
+            #print("cehck after step_a in proccess : ",t.cuda.memory_summary(device=None, abbreviated=False))
+    
+
+        else:
+            if train_DelayedUpdates.counter % 2 ==1:
+                mw.zero_grad()
+            
+                loss.backward(create_graph=True)
+                mw.step_w()
+
+            if train_DelayedUpdates.counter % 2 ==0:
+                mw.zero_grad()
+                loss.backward(create_graph=True)
+                mw.step_w()
+                if not( (epoch==0) and (batch_idx==0)):
+                    if num_solution==1.5:
+                        mw.step_a_and_b()
+                    else:
+                        print("trying to sstep a")
+                        mw.step_a()
 
         if not( (epoch==0) and (batch_idx==0)):
             train_DelayedUpdates.counter+=1
@@ -257,6 +270,8 @@ def train_DelayedUpdates(train_loader, model,num_solution, criterion, optimizer,
                     'BatchTime': batch_time,
                     'LR': optimizer.param_groups[0]['lr']
                 })
+        #print("end of batch loop : ",t.cuda.memory_summary(device=None, abbreviated=False))
+
 
     logger.info('==> Top1: %.3f    Top5: %.3f    Loss: %.3f\n',
                 top1.avg, top5.avg, losses.avg)
@@ -284,10 +299,14 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
     end_time = time.time()
     step_counter = 0
     prev_grads = {}
+    counter = 0
     
     for batch_idx, (inputs, targets) in enumerate(train_loader):
         #print(t.cuda.memory_summary(device=None, abbreviated=False))
-        mw.begin_w()
+        if num_solution == 7:
+            mw.begin_w_meta()
+        else:
+            mw.begin_w()
         
         inputs = inputs.to(args.device.type)
         targets = targets.to(args.device.type)
@@ -301,16 +320,29 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
         top1.update(acc1.item(), inputs.size(0))
         top5.update(acc5.item(), inputs.size(0))
 
-        
+        if counter != 0 and counter%T ==0:
+            
+            if num_solution == 7:
+                mw.step_meta()
+                mw.zero_grad_meta()
+                mw.begin()# Is this cheating? Isnt it just hiding some problem? we should not need to do that
+                mw.zero_grad_meta()
+            else:
+                mw.step_a()
+                mw.zero_grad()
         #if batch_idx !=0:
         #    #print("check what zeros : ")
         #    mw.step_w()
-        mw.zero_grad_not_a()
+        if num_solution == 7:
+            mw.zero_grad_not_meta()
+        else:
+            mw.zero_grad_not_a()
         #if batch_idx !=0:
         #    print("check afterrrrrr what zeros : ")
         #    mw.step_w()
         loss.backward(create_graph=True)
             
+
         mw.step_w()
             
         batch_time.update(time.time() - end_time)
@@ -325,6 +357,7 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
                     'BatchTime': batch_time,
                     'LR': 0,
                 })
+        counter+=1
 
     logger.info('==> Top1: %.3f    Top5: %.3f    Loss: %.3f\n',
                 top1.avg, top5.avg, losses.avg)
