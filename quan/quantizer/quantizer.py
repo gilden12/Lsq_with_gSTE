@@ -18,7 +18,7 @@ class IdentityQuan(Quantizer):
         assert bit is None, 'The bit-width of identity quantizer must be None'
     def update_strname(self,strname):
         pass
-    def update_num_solution(self,num_solution,T):
+    def update_list_for_lsq(self,num_solution,T):
         pass
     def forward(self, x):
         return x

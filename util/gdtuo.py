@@ -290,6 +290,7 @@ class SGD_for_gSTE(Optimizable):
                 #check = torch.where(p.ge(vdivs_Qq) , 1 , 2)
                 #print("check params: ",params[name])
                 
+                
     
     def step_w(self, params,modules_to_quantize,excepts):# step on the rest of the parametrs
         self.optimizer.step(self.parameters)
@@ -317,18 +318,19 @@ class SGD_for_gSTE(Optimizable):
                 save_gradients.update_dfdLdV(convert_name(name),grad_tesnor.grad)
             else:
                 if not((convert_name(name) in modules_to_quantize.keys()) and name.endswith("quan_w_fn.a") and not(convert_name(name) in excepts.keys())):
-                    if not name.endswith("v_hat"):
-                        #print("check name : ",name)
-                        g=param.grad.detach()
-                        p = param.detach()
-                        if self.mu != 0.0:
-                            if name not in self.state:
-                                buf = self.state[name] = g
-                            else:
-                                buf = self.state[name].detach()
-                                buf = buf.detach() * self.parameters['mu'] + g
-                            g = self.state[name] = buf
-                        params[name] = p - g * self.parameters['alpha'].detach()
+                    if param.grad != None:
+                        if not name.endswith("v_hat"):
+                            #print("check name : ",name)
+                            g=param.grad.detach()
+                            p = param.detach()
+                            if self.mu != 0.0:
+                                if name not in self.state:
+                                    buf = self.state[name] = g
+                                else:
+                                    buf = self.state[name].detach()
+                                    buf = buf.detach() * self.parameters['mu'] + g
+                                g = self.state[name] = buf
+                            params[name] = p - g * self.parameters['alpha'].detach()
 
                     
 
@@ -412,6 +414,7 @@ class SGD_Delayed_Updates(Optimizable):
         super().__init__(parameters, optimizer,None,parameters,{},{})
 
     def step_a(self, params,modules_to_quantize,excepts):# step on the a parameters
+        #print("I am here in step_a")
         self.optimizer.step(self.parameters)
         
         
@@ -429,7 +432,9 @@ class SGD_Delayed_Updates(Optimizable):
                     g = self.state[name] = buf
                 
                 params[name] = p - g * self.parameters['alpha_for_a']
-
+                #print("The statics of the graident for parameter : ",name," are, mean : ",g," , var : ",g.var().item(),g.dtype)
+                #print("The statics of the value for parameter : ",name," are, mean : ",params[name].mean().item()," , var : ",params[name].var().item())
+                #if not torch.equal((params[name],(p))):      
 
                 
     def step_w(self, params,modules_to_quantize,excepts):# step on the rest of the parametrs
@@ -471,8 +476,11 @@ class SGD_Delayed_Updates(Optimizable):
                         #else:
                         #    print(" check name param ",name,param.grad)
                 #else:
-                #    if param.grad[100].mean() != 0:
-                #           print(" check grad name ",name,param.grad[100].mean())
+                    # if name == "module.layer3.1.conv2.quan_w_fn.a":
+                    #     #if param.grad[100].mean() != 0:
+                    #     print(" check grad 100 ",name,param.grad[100].mean())
+                    #     #if param.grad[200].mean() != 0:
+                    #     print(" check grad 200 ",name,param.grad[186+100].mean())
 
 class SGD_Delayed_Updates_meta_network(Optimizable):
     '''
@@ -525,7 +533,7 @@ class SGD_Delayed_Updates_meta_network(Optimizable):
 
                     #print("len params : ",len(params))
                 else:
-                    print("grad is none")
+                    print("grad is none",name)
                     #print(" check name in else ",name)
 
 
@@ -735,8 +743,11 @@ class ModuleWrapper(Optimizable):
     def zero_grad(self):
         """ Set all gradients to zero. """
         #print("size is here real : ",len(self.all_params_with_gradients))
+        #print("bef zero_grad :",torch.cuda.memory_summary(device=None, abbreviated=False))
 
         self.module.zero_grad()
+        #print("aft zero_grad 1:",torch.cuda.memory_summary(device=None, abbreviated=False))
+
         for param in self.all_params_with_gradients:
             
             param.grad = torch.zeros_like(param)
@@ -745,6 +756,8 @@ class ModuleWrapper(Optimizable):
             param.grad = torch.zeros_like(param)
 
         self.optimizer.zero_grad()
+        #print("aft zero_grad 2:",torch.cuda.memory_summary(device=None, abbreviated=False))
+
 
     def zero_grad_meta(self):
         """ Set all gradients to zero. """
@@ -826,6 +839,9 @@ class ModuleWrapper(Optimizable):
 
     def eval(self):
         self.module.eval()   
+
+    def named_parameters(self):
+        return self.module.named_parameters(recurse=True)
 
     def named_modules(self):
         return self.module.named_modules()

@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+import gc
 
 import torch as t
 import yaml
@@ -201,7 +202,21 @@ using_gdtuo=True
 # 6 - Meta network with delayed updates in test framework
 # 7 - Meta network with all times together
 # 8 - check baseline which is initial quantization and then full precision training
+# 9 - Training all times together with MAD instead of STE
+#10 - Training all times together and then taking the last trained a value and keep training with its value without learning a
+#11 - Training all times together for x epochs then taking the learned values and training them again all times together to find the following x epochs
 num_solution = 2
+#The learning rate   set used to train the a parameters
+a_lr=1e4*5
+#Decides how many diffrent a parameters for each weight
+#0 - a per element, every element in the weight gets a repective a parameter
+#1 - a per layer, every weight gets one a parameter
+#2 - a per chnnel, every channel of the weight gets a respective a parameter
+a_per=0
+#if grouping together multiple a values to be a shared parameter to reduce memory consuption this sets the amount of parameter together each time else set 1
+num_share_params=1
+#In all time todgether training this sets the amount of epochs learned before startin learning from screatch
+num_of_epochs_each_time = 14
 
 def main():
     print("Num solution is : ",num_solution)
@@ -259,9 +274,11 @@ def main():
 
     # Create the model
     model = create_model(args)
-    T =len(train_loader)# A vector length for All times together solution (# of learning steps before update)
-    #T =10
-    modules_to_replace = quan.find_modules_to_quantize(model, args.quan,num_solution, T)
+    
+
+    T =len(train_loader)*num_of_epochs_each_time# A vector length for All times together solution (# of learning steps before update)
+    list_for_lsq=[T, a_per,num_share_params]
+    modules_to_replace = quan.find_modules_to_quantize(model, args.quan,num_solution, list_for_lsq)
     modules_to_replace_temp=dict(modules_to_replace)
     model = quan.replace_module_by_names(model, modules_to_replace)
     #tbmonitor.writer.add_graph(model, input_to_model=train_loader.dataset[0][0].unsqueeze(0))
@@ -291,8 +308,8 @@ def main():
         main_original(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir)
     elif num_solution == 1 or num_solution == 1.5:
         main_DelayedUpdates(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir)
-    elif num_solution == 2 or num_solution==7 or num_solution == 8:
-        main_all_times(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir,T)
+    elif num_solution == 2 or num_solution==7 or num_solution == 8 or num_solution == 9:
+        main_all_times(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir,T,num_of_epochs_each_time)
     elif num_solution == 5:
         main_analytical_all_time(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir,T)
     elif num_solution == 6:
@@ -597,7 +614,7 @@ def main_DelayedUpdates(model,args,modules_to_replace_temp,train_loader,logger,t
 
 list_train = []
 last_train=None
-
+prev_list_train=[]
 def main_DelayedUpdates_meta_network_all_time(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir):
     model_copy = copy.deepcopy(model)
     compare_models(model_copy, model)
@@ -659,11 +676,11 @@ def main_DelayedUpdates_meta_network_all_time(model,args,modules_to_replace_temp
         for times in range(start_epoch, args.epochs):
             seed = 0
             set_random_seed(seed)
-            print("cehck 3 :",t.cuda.memory_summary(device=None, abbreviated=False))
+            #print("cehck 3 :",t.cuda.memory_summary(device=None, abbreviated=False))
             #print("cehck 1 :",t.cuda.memory_summary(device=None, abbreviated=False))
             #train_a_all_times(times,val_loader,train_loader,start_epoch,T,criterion,monitors,args,logger,perf_scoreboard,tbmonitor,mw)
             train_a_Delayed_updates(times,val_loader,train_loader,start_epoch,criterion,monitors,args,logger,perf_scoreboard,tbmonitor,mw,optimizer,a_optimizer,lr_scheduler)
-            print("cehck 4 :",t.cuda.memory_summary(device=None, abbreviated=False))
+            #print("cehck 4 :",t.cuda.memory_summary(device=None, abbreviated=False))
             prev_model = model.state_dict()
 
             #print("cehck 2 :",t.cuda.memory_summary(device=None, abbreviated=False))
@@ -760,9 +777,9 @@ def main_analytical_all_time(model,args,modules_to_replace_temp,train_loader,log
     #Here you can change the leraning rate of a
     a_optimizer = t.optim.SGD(a_params_list, lr=a_opt_lr)
     
-    
+    lr_for_a = 1e5
     #gdtuo support
-    optim = SGD_for_gSTE(0.01,0.0,1e3)
+    optim = SGD_for_gSTE(0.01,0.0,lr_for_a)
     mw = ModuleWrapper(model, optim, modules_to_replace_temp,args.quan.excepts)
     print(" check modules_to_replace_temp : ",modules_to_replace_temp)
     print(" check args.quan.excepts : ",args.quan.excepts)
@@ -809,11 +826,11 @@ def main_analytical_all_time(model,args,modules_to_replace_temp,train_loader,log
             t.use_deterministic_algorithms(True)
             set_global_seed(seed)
             set_random_seed(seed)  
-            print("cehck 3 :",t.cuda.memory_summary(device=None, abbreviated=False))
+            #print("cehck 3 :",t.cuda.memory_summary(device=None, abbreviated=False))
             #print("cehck 1 :",t.cuda.memory_summary(device=None, abbreviated=False))
             #train_a_all_times(times,val_loader,train_loader,start_epoch,T,criterion,monitors,args,logger,perf_scoreboard,tbmonitor,mw)
             train_a_analytical(times,val_loader,train_loader,start_epoch,T,criterion,monitors,args,logger,perf_scoreboard,tbmonitor,mw,optimizer,a_optimizer,lr_scheduler)
-            print("cehck 4 :",t.cuda.memory_summary(device=None, abbreviated=False))
+            #print("cehck 4 :",t.cuda.memory_summary(device=None, abbreviated=False))
             prev_model = model.state_dict()
 
             #print("cehck 2 :",t.cuda.memory_summary(device=None, abbreviated=False))
@@ -885,17 +902,19 @@ def train_a_analytical(times,val_loader,train_loader,start_epoch,T,criterion,mon
     list_train.append(last_train)
     print("list train is : ",list_train)
 
-def main_all_times(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir,T):
+def main_all_times(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir,T,num_of_epochs_each_time):
     torch.backends.cudnn.deterministic = True
     
     model_copy = copy.deepcopy(model)
     compare_models(model_copy, model)
-
-    train_loader_copy = copy.deepcopy(train_loader)
+    org_mod=model
+    model = model_copy
+    model_copy = org_mod
+    #train_loader_copy = copy.deepcopy(train_loader)
 
 
     #gdtuo support
-    a_lr=1e3
+    #a_lr = 1e3
     if num_solution == 7:
         optim = SGD_Delayed_Updates_meta_network(0.01,0.0,a_lr)
     else:
@@ -906,7 +925,7 @@ def main_all_times(model,args,modules_to_replace_temp,train_loader,logger,test_l
     mw.initialize()
 
     perf_scoreboard = process.PerformanceScoreboard(args.log.num_best_scores)
-    
+    counter=0
     if args.eval:
         process.validate(test_loader, mw, criterion, -1, monitors, args)
     else:  # training
@@ -924,13 +943,16 @@ def main_all_times(model,args,modules_to_replace_temp,train_loader,logger,test_l
             set_global_seed(seed)
             set_random_seed(seed)  
             #temp_copy= copy.deepcopy(model)
-            train_a_all_times(times,val_loader,train_loader,start_epoch,T,criterion,monitors,args,logger,perf_scoreboard,tbmonitor,mw,num_solution)
+            #print("beg train_a in main :",t.cuda.memory_summary(device=None, abbreviated=False))
+
+            train_a_all_times(times,val_loader,train_loader,start_epoch,T,criterion,monitors,args,logger,perf_scoreboard,tbmonitor,mw,num_solution,num_of_epochs_each_time)
             prev_model = model.state_dict()
             
             #print(t.cuda.memory_summary(device=None, abbreviated=False))
+            #print("bef model_new :",t.cuda.memory_summary(device=None, abbreviated=False))
             model_new= copy.deepcopy(model_copy)
+            #print("aft model_new :",t.cuda.memory_summary(device=None, abbreviated=False))
             
-            #print(t.cuda.memory_summary(device=None, abbreviated=False))
             if num_solution == 7:
                 with torch.no_grad():#saving trained a values between iterations
                     for name, param in model_new.named_parameters():
@@ -949,15 +971,24 @@ def main_all_times(model,args,modules_to_replace_temp,train_loader,logger,test_l
                                 assert torch.equal(model_new.state_dict()[name], prev_model[name])
                 else:
                     with torch.no_grad():#saving trained a values between iterations
+                        flag=0
                         for name, param in model_new.named_parameters():
                             if name.endswith('.a'):
-                                print("check if grad is not zero : ",param.grad)
+                                #print("check if grad is not zero : ",param.grad)
                                 param.copy_(prev_model[name])
                                 assert torch.equal(model_new.state_dict()[name], prev_model[name])
-                
+                                #print("print histogram value : ",prev_model[name])
+                                #print("print name : ",name)
+                                if flag==1:
+                                    
+                                    tensor_histogram(param.cpu())
+                                flag+=1
+            
+            #print("aft val assignment :",t.cuda.memory_summary(device=None, abbreviated=False))
+
             model=None
             model=model_new
-
+                
             
             if num_solution == 7:
                 optim = SGD_Delayed_Updates_meta_network(0.01,0.0,a_lr)
@@ -967,9 +998,21 @@ def main_all_times(model,args,modules_to_replace_temp,train_loader,logger,test_l
             mw = ModuleWrapper(model_new, optim, modules_to_replace_temp,args.quan.excepts)
 
             mw.initialize()
+            #print("aft end of loop :",t.cuda.memory_summary(device=None, abbreviated=False))
+            gc.collect()
+            torch.cuda.empty_cache()
+            #train_loader=copy.deepcopy(train_loader_copy)
             
-            train_loader=copy.deepcopy(train_loader_copy)
+            print("aft end of loop :",t.cuda.memory_summary(device=None, abbreviated=False))
+            # counter+=1
+            # if counter == 15:
+            #     a_lr=1e1
 
+        #finished training
+          
+        #if num_solution == 10:
+            
+        #if num_solution == 11:
         logger.info('>>>>>>>> Epoch -1 (final model evaluation)')
         process.validate(test_loader, mw, criterion, -1, monitors, args)
 
@@ -1003,44 +1046,86 @@ def print_test_graph(data):
     plt.show()
 
 
-def train_a_all_times(times,val_loader,train_loader,start_epoch,T,criterion,monitors,args,logger,perf_scoreboard,tbmonitor,mw,num_solution):
+def train_a_all_times(times,val_loader,train_loader,start_epoch,T,criterion,monitors,args,logger,perf_scoreboard,tbmonitor,mw,num_solution,num_of_epochs_each_time):
     print(" Starting ",times," time of updating a")
+    #print("bef begin :",t.cuda.memory_summary(device=None, abbreviated=False))
     mw.begin()
+    #print("aft begin :",t.cuda.memory_summary(device=None, abbreviated=False))
+
     if num_solution==7:
         mw.zero_grad_meta()
     else:
         mw.zero_grad()
-
-            
-    for epoch in range(1):
-        
+    
+    this_trining_list=[]
+    count=0
+    #print("bef for loop train :",t.cuda.memory_summary(device=None, abbreviated=False))
+    prev_last=[]
+    last_train=[]
+    for epoch in range(num_of_epochs_each_time):
         
         logger.info('>>>>>>>> Epoch %3d' % epoch)
+        #print("bef train ",t.cuda.memory_summary(device=None, abbreviated=False))
         t_top1, t_top5, t_loss = process.train_all_times(train_loader, mw,num_solution,T, criterion, epoch, monitors, args)
-        v_top1, v_top5, v_loss = process.validate(val_loader, mw, criterion, epoch, monitors, args)
+        #print("aft train",t.cuda.memory_summary(device=None, abbreviated=False))
+        #v_top1, v_top5, v_loss = process.validate(val_loader, mw, criterion, epoch, monitors, args)
+        prev_last=last_train
         last_train=[times,t_top1]
-        
-        tbmonitor.writer.add_scalars('Train_vs_Validation/Loss', {'train': t_loss, 'val': v_loss}, epoch)
-        tbmonitor.writer.add_scalars('Train_vs_Validation/Top1', {'train': t_top1, 'val': v_top1}, epoch)
-        tbmonitor.writer.add_scalars('Train_vs_Validation/Top5', {'train': t_top5, 'val': v_top5}, epoch)
 
-        perf_scoreboard.update(v_top1, v_top5, epoch)
-        is_best = perf_scoreboard.is_best(times)
+        this_trining_list.append(t_top1)
+        count+=1
+        #tbmonitor.writer.add_scalars('Train_vs_Validation/Loss', {'train': t_loss, 'val': v_loss}, epoch)
+        #tbmonitor.writer.add_scalars('Train_vs_Validation/Top1', {'train': t_top1, 'val': v_top1}, epoch)
+        #tbmonitor.writer.add_scalars('Train_vs_Validation/Top5', {'train': t_top5, 'val': v_top5}, epoch)
+
+        #perf_scoreboard.update(v_top1, v_top5, epoch)
+        #is_best = perf_scoreboard.is_best(times)
         #util.save_checkpoint(epoch, args.arch, model, {'top1': v_top1, 'top5': v_top5}, is_best, args.name, log_dir)
         if num_solution==7:
             mw.step_meta()
         else:
-            mw.step_a()
+            if T/len(train_loader) == count:
+                print("check")
+                mw.step_a()
+                
         
         if num_solution==7:
             mw.zero_grad_meta()
         else:
-            mw.zero_grad()
+            if T/len(train_loader) == count:
+                mw.zero_grad()
+                count=0
+        
+        #print(t.cuda.memory_summary(device=None, abbreviated=False))
+        #mw.zero_grad()
+        #gc.collect()
+        #torch.cuda.empty_cache()
+        #print(t.cuda.memory_summary(device=None, abbreviated=False))
+    print("Current : ",this_trining_list)
     mw =None
+    prev_list_train.append(prev_last)
+    print("prev list train is : ",prev_list_train)
     list_train.append(last_train)
     print("list train is : ",list_train)
         
+
+def tensor_histogram(tensor):
+    # Convert the tensor to a numpy array
+    plt.close('all')
+
+    tensor_np = tensor.numpy()
     
+    # Flatten the tensor to 1D for the histogram
+    tensor_np_flat = tensor_np.flatten()
+    
+    # Plot the histogram
+    plt.ion()  # Enable interactive mode
+    plt.hist(tensor_np_flat, bins=100,range=(0,5), edgecolor='black')
+    plt.title('Histogram of Tensor Values')
+    plt.xlabel('Value')
+    plt.ylabel('Frequency')
+    plt.draw()
+    plt.pause(0.001)  # Allow the plot to update
     
 def compare_models(model_1, model_2):
     models_differ = 0

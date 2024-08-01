@@ -2,7 +2,7 @@ import logging
 import math
 import operator
 import time
-
+from torchviz import make_dot
 import torch as t
 
 from util import AverageMeter
@@ -302,34 +302,41 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
     counter = 0
     
     for batch_idx, (inputs, targets) in enumerate(train_loader):
+        
+
         #print(t.cuda.memory_summary(device=None, abbreviated=False))
+        
         if num_solution == 7:
             mw.begin_w_meta()
         else:
             mw.begin_w()
         
+        
         inputs = inputs.to(args.device.type)
         targets = targets.to(args.device.type)
 
-
+        #print("the input shape : ", inputs.shape)
         outputs = model.forward(inputs)
+        #print("ehcck ",len(dict(list(model.named_parameters()))))
+        #make_dot(outputs, params=dict(list(model.named_parameters()))).render("simple_model_graph", format="png")
         loss = criterion(outputs, targets)
 
         acc1, acc5 = accuracy(outputs.data, targets.data, topk=(1, 5))
         losses.update(loss.item(), inputs.size(0))
         top1.update(acc1.item(), inputs.size(0))
         top5.update(acc5.item(), inputs.size(0))
-
+        
         if counter != 0 and counter%T ==0:
             
             if num_solution == 7:
                 mw.step_meta()
-                mw.zero_grad_meta()
                 mw.begin()# Is this cheating? Isnt it just hiding some problem? we should not need to do that
                 mw.zero_grad_meta()
             else:
                 mw.step_a()
                 mw.zero_grad()
+        #print("before everythibng :")
+        
         #if batch_idx !=0:
         #    #print("check what zeros : ")
         #    mw.step_w()
@@ -340,14 +347,17 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
         #if batch_idx !=0:
         #    print("check afterrrrrr what zeros : ")
         #    mw.step_w()
+        
         loss.backward(create_graph=True)
+        
             
-
+        
         mw.step_w()
+        
             
         batch_time.update(time.time() - end_time)
         end_time = time.time()
-
+        
         if (batch_idx + 1) % args.log.print_freq == 0:
             for m in monitors:
                 m.update(epoch, batch_idx + 1, steps_per_epoch, 'Training', {
@@ -358,7 +368,7 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
                     'LR': 0,
                 })
         counter+=1
-
+        #print("after everythibng  :")
     logger.info('==> Top1: %.3f    Top5: %.3f    Loss: %.3f\n',
                 top1.avg, top5.avg, losses.avg)
     return top1.avg, top5.avg, losses.avg
