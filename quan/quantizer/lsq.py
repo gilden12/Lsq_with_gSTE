@@ -368,9 +368,11 @@ class LsqQuan(Quantizer):
         self.meta_network = MetaFC(100,False)
         self.meta_modules_STE_const = t.nn.Parameter(t.zeros(1))
         self.x_hat=t.nn.Parameter(t.ones(1))
+        self.set_use_last_a_trained=False
     def update_strname(self,strname):
         self.strname=strname
-    
+    def use_last_a_trained(self):
+        self.set_use_last_a_trained=True
     def update_list_for_lsq(self,num_solution,list_for_lsq):
         self.num_solution=num_solution
         self.T=list_for_lsq[0]
@@ -388,7 +390,7 @@ class LsqQuan(Quantizer):
             self.x_hat=t.nn.Parameter(t.ones(x.size()))
             self.v_hat = t.nn.Parameter(t.ones(x.size()))
             self.num_share_params=1
-            if self.num_solution == 2 or self.num_solution==8 or self.num_solution==9 :
+            if self.num_solution == 2 or self.num_solution==8 or self.num_solution==9 or self.num_solution==10 or self.num_solution==11:
                 
                 if self.a_per == 0:#a per element
                     my_list = [i for i in x.size()]
@@ -681,11 +683,14 @@ class LsqQuan(Quantizer):
                 #print("check if eq 1 : ",(self.T/self.num_share_params))
                 
                 #print("a num : ",int(math.floor(self.counter/self.num_share_params)%(self.T/self.num_share_params)))
-                if int(math.floor(self.counter/self.num_share_params)%(self.T/self.num_share_params)) == int((self.T/self.num_share_params)-1) and use_ste_end==False:
-                    #print("Im here : ",int(math.floor(self.counter/self.num_share_params-1)%(self.T/self.num_share_params)))
-                    x = Calc_grad_a_STE.apply(x,self.a[int(math.floor(self.counter/self.num_share_params-1)%(self.T/self.num_share_params))],self.name)
+                if self.set_use_last_a_trained:
+                    x = Calc_grad_a_STE.apply(x,self.a[-2],self.name)
                 else:
-                    x = Calc_grad_a_STE.apply(x,self.a[int(math.floor(self.counter/self.num_share_params)%(self.T/self.num_share_params))],self.name)
+                    if int(math.floor(self.counter/self.num_share_params)%(self.T/self.num_share_params)) == int((self.T/self.num_share_params)-1) and use_ste_end==False:
+                        #print("Im here : ",int(math.floor(self.counter/self.num_share_params-1)%(self.T/self.num_share_params)))
+                        x = Calc_grad_a_STE.apply(x,self.a[int(math.floor(self.counter/self.num_share_params-1)%(self.T/self.num_share_params))],self.name)
+                    else:
+                        x = Calc_grad_a_STE.apply(x,self.a[int(math.floor(self.counter/self.num_share_params)%(self.T/self.num_share_params))],self.name)
             #if self.counter%self.T == 0:
             #    print("Now equals zero !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             #if (self.counter%self.T)%10== 0 or (self.counter%self.T)==self.T-2 or (self.counter%self.T)==self.T-1 or (self.counter%self.T)==self.T-3:
@@ -742,7 +747,7 @@ class LsqQuan(Quantizer):
                 s_grad_scale=1.0
         s_scale = grad_scale(self.s, s_grad_scale)
         if t.equal(t.ones(x.size()).to(device='cuda'),self.x_hat):
-            
+            print("ERORRRRRRR!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             x_original=x
             x = x / s_scale
             x = t.clamp(x, self.thd_neg, self.thd_pos)
@@ -759,11 +764,11 @@ class LsqQuan(Quantizer):
                 return self.x_hat
             else:
                 x_original=x
-                x = x / s_scale
+                # x = x / s_scale
 
-                x = t.clamp(x, self.thd_neg, self.thd_pos)
-                x = round_pass(x)
-                x = x * s_scale
+                # x = t.clamp(x, self.thd_neg, self.thd_pos)
+                # x = round_pass(x)
+                # x = x * s_scale
                 return x_original
 
         
@@ -781,7 +786,7 @@ class LsqQuan(Quantizer):
             return self.forward_delayed_updates( x)
         elif self.num_solution == 1.5 or self.num_solution == 6:
             return self.forward_delayed_updates_meta_quant(x)
-        elif self.num_solution == 2 or self.num_solution == 7:
+        elif self.num_solution == 2 or self.num_solution == 7 or self.num_solution == 10 or self.num_solution == 11:
             return self.forward_all_times( x)
         elif self.num_solution == 8:
             return self.forward_baseline_no_quant( x)

@@ -22,7 +22,7 @@ device:
   # Use CPU or GPU (choices: cpu, cuda)
   type: cuda
   # GPU device IDs to be used. Only valid when device.type is 'cuda'
-  gpu: [1]
+  gpu: [5]
 
 # Dataset loader
 dataloader:
@@ -113,7 +113,7 @@ quan:
 # If this field is true, all the bellowing options will be ignored
 eval: false
 
-epochs: 100000
+epochs: 1
 
 optimizer:
   learning_rate: 0.01

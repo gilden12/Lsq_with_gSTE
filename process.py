@@ -280,7 +280,7 @@ train_DelayedUpdates.counter=0
 
 
 
-def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monitors, args):
+def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monitors, args,base):
     mw=model
 
     
@@ -360,7 +360,7 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
         
         if (batch_idx + 1) % args.log.print_freq == 0:
             for m in monitors:
-                m.update(epoch, batch_idx + 1, steps_per_epoch, 'Training', {
+                m.update(epoch+base, batch_idx + 1, steps_per_epoch, 'Training', {
                     'Loss': losses,
                     'Top1': top1,
                     'Top5': top5,
