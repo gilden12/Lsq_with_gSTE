@@ -80,205 +80,6 @@ def train(train_loader, model, criterion, optimizer, lr_scheduler, epoch, monito
     return top1.avg, top5.avg, losses.avg
 
 
-def train_analytical(train_loader, model,using_gdtuo, criterion, optimizer,a_optimizer, lr_scheduler, epoch, monitors, args):
-    if using_gdtuo:
-        mw=model
-    
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
-    batch_time = AverageMeter()
-
-    total_sample = len(train_loader.sampler)
-    batch_size = train_loader.batch_size
-    steps_per_epoch = math.ceil(total_sample / batch_size)
-    logger.info('Training: %d samples (%d per mini-batch)', total_sample, batch_size)
-
-    model.train()
-    end_time = time.time()
-    for batch_idx, (inputs, targets) in enumerate(train_loader):
-        #print("cehck 4 :",t.cuda.memory_summary(device=None, abbreviated=False))
-        #print(t.cuda.memory_summary(device=None, abbreviated=False))
-        for name, module in model.named_modules():
-            #if "conv" in name:
-            #    module.get_v_hat_grads=True
-            module.get_v_hat_grads=True
-        if using_gdtuo:
-            mw.begin()
-        inputs = inputs.to(args.device.type)
-        targets = targets.to(args.device.type)
-
-
-        outputs = model.forward(inputs)
-        loss = criterion(outputs, targets)
-
-        acc1, acc5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        losses.update(loss.item(), inputs.size(0))
-        top1.update(acc1.item(), inputs.size(0))
-        top5.update(acc5.item(), inputs.size(0))
-
-        if lr_scheduler is not None:
-            lr_scheduler.step(epoch=epoch, batch=batch_idx)
-
-        # is_a_warmup=1
-        #
-        # if epoch==0 and is_a_warmup==1:
-        #     n=600
-        #     if batch_idx <=n:
-        #         for g in a_optimizer.param_groups:
-        #             g['lr'] = (batch_idx) *(1/(n))*a_optimizer_lr
-        #
-        # if epoch==0 and is_a_warmup==2:
-        #     n=200
-        #     if batch_idx <=n:
-        #         for g in a_optimizer.param_groups:
-        #             g['lr'] = (batch_idx** 2) *(1/(n ** 2))*a_optimizer_lr
-        #
-        
-        if using_gdtuo:
-            if not( (epoch==0) and (batch_idx==0)):
-                mw.zero_grad()
-                loss.backward(create_graph=True)
-                mw.get_dl_dv_hat()
-                mw.step_a()
-                
-        else:
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            
-        #No need for step with gdtuo yet just got gradients for v_hat
-
-
-        #a_optimizer.step()
-        
-        for name, module in model.named_modules():
-            #if "conv" in name:
-            #    module.get_v_hat_grads=False
-            module.get_v_hat_grads=False
-        if using_gdtuo:
-            outputs = model.forward(inputs)
-            loss = criterion(outputs, targets)
-            mw.zero_grad()
-            #mw.check_grad_vals()
-
-            loss.backward(create_graph=True) # important! use create_graph=True
-            #print("calling step")
-            mw.step_w()
-            
-        
-        if False:
-            mw.zero_grad()
-            loss.backward(create_graph=True) # important! use create_graph=True
-            mw.step()
-            print("finished time")
-
-        batch_time.update(time.time() - end_time)
-        end_time = time.time()
-
-        if (batch_idx + 1) % args.log.print_freq == 0:
-            for m in monitors:
-                m.update(epoch, batch_idx + 1, steps_per_epoch, 'Training', {
-                    'Loss': losses,
-                    'Top1': top1,
-                    'Top5': top5,
-                    'BatchTime': batch_time,
-                    'LR': optimizer.param_groups[0]['lr']
-                })
-    logger.info('==> Top1: %.3f    Top5: %.3f    Loss: %.3f\n',
-                top1.avg, top5.avg, losses.avg)
-    return top1.avg, top5.avg, losses.avg
-
-def train_DelayedUpdates(train_loader, model,num_solution, criterion, optimizer,a_optimizer, lr_scheduler, epoch, monitors, args):
-    
-    mw=model
-
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
-    batch_time = AverageMeter()
-
-    total_sample = len(train_loader.sampler)
-    batch_size = train_loader.batch_size
-    steps_per_epoch = math.ceil(total_sample / batch_size)
-    logger.info('Training: %d samples (%d per mini-batch)', total_sample, batch_size)
-
-    model.train()
-    end_time = time.time()
-    step_counter = 0
-    prev_grads = {}
-    for batch_idx, (inputs, targets) in enumerate(train_loader):
-        #print("beggining of batch loop : ",t.cuda.memory_summary(device=None, abbreviated=False))
-        mw.begin()
-        inputs = inputs.to(args.device.type)
-        targets = targets.to(args.device.type)
-
-
-        outputs = model.forward(inputs)
-        loss = criterion(outputs, targets)
-
-        acc1, acc5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        losses.update(loss.item(), inputs.size(0))
-        top1.update(acc1.item(), inputs.size(0))
-        top5.update(acc5.item(), inputs.size(0))
-
-        if lr_scheduler is not None:
-            lr_scheduler.step(epoch=epoch, batch=batch_idx)
-
-        
-        if num_solution ==6:
-
-            mw.zero_grad()
-            loss.backward(create_graph=True)
-            mw.step_w()
-
-            if train_DelayedUpdates.counter % 2 ==1:
-                mw.step_meta()
-            
-            #print("cehck after step_a in proccess : ",t.cuda.memory_summary(device=None, abbreviated=False))
-    
-
-        else:
-            if train_DelayedUpdates.counter % 2 ==1:
-                mw.zero_grad()
-            
-                loss.backward(create_graph=True)
-                mw.step_w()
-
-            if train_DelayedUpdates.counter % 2 ==0:
-                mw.zero_grad()
-                loss.backward(create_graph=True)
-                mw.step_w()
-                if not( (epoch==0) and (batch_idx==0)):
-                    if num_solution==1.5:
-                        mw.step_a_and_b()
-                    else:
-                        print("trying to sstep a")
-                        mw.step_a()
-
-        if not( (epoch==0) and (batch_idx==0)):
-            train_DelayedUpdates.counter+=1
-        batch_time.update(time.time() - end_time)
-        end_time = time.time()
-
-        if (batch_idx + 1) % args.log.print_freq == 0:
-            for m in monitors:
-                m.update(epoch, batch_idx + 1, steps_per_epoch, 'Training', {
-                    'Loss': losses,
-                    'Top1': top1,
-                    'Top5': top5,
-                    'BatchTime': batch_time,
-                    'LR': optimizer.param_groups[0]['lr']
-                })
-        #print("end of batch loop : ",t.cuda.memory_summary(device=None, abbreviated=False))
-
-
-    logger.info('==> Top1: %.3f    Top5: %.3f    Loss: %.3f\n',
-                top1.avg, top5.avg, losses.avg)
-    return top1.avg, top5.avg, losses.avg
-train_DelayedUpdates.counter=0
-
-
 
 def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monitors, args,base):
     mw=model
@@ -295,30 +96,19 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
     logger.info('Training: %d samples (%d per mini-batch)', total_sample, batch_size)
 
     model.train()
-    #model.eval()
     end_time = time.time()
     step_counter = 0
     prev_grads = {}
     counter = 0
     
-    for batch_idx, (inputs, targets) in enumerate(train_loader):
-        
-
-        #print(t.cuda.memory_summary(device=None, abbreviated=False))
-        
-        if num_solution == 7:
-            mw.begin_w_meta()
-        else:
-            mw.begin_w()
+    for batch_idx, (inputs, targets) in enumerate(train_loader):        
+        mw.begin_w()
         
         
         inputs = inputs.to(args.device.type)
         targets = targets.to(args.device.type)
 
-        #print("the input shape : ", inputs.shape)
         outputs = model.forward(inputs)
-        #print("ehcck ",len(dict(list(model.named_parameters()))))
-        #make_dot(outputs, params=dict(list(model.named_parameters()))).render("simple_model_graph", format="png")
         loss = criterion(outputs, targets)
 
         acc1, acc5 = accuracy(outputs.data, targets.data, topk=(1, 5))
@@ -328,32 +118,16 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
         
         if counter != 0 and counter%T ==0:
             
-            if num_solution == 7:
-                mw.step_meta()
-                mw.begin()# Is this cheating? Isnt it just hiding some problem? we should not need to do that
-                mw.zero_grad_meta()
-            else:
-                mw.step_a()
-                mw.zero_grad()
-        #print("before everythibng :")
+
+            mw.step_a()
+            mw.zero_grad()
         
-        #if batch_idx !=0:
-        #    #print("check what zeros : ")
-        #    mw.step_w()
-        if num_solution == 7:
-            mw.zero_grad_not_meta()
-        else:
-            mw.zero_grad_not_a()
-        #if batch_idx !=0:
-        #    print("check afterrrrrr what zeros : ")
-        #    mw.step_w()
+
+        mw.zero_grad_not_a()
         
         loss.backward(create_graph=True)
-        
             
-        
         mw.step_w()
-        
             
         batch_time.update(time.time() - end_time)
         end_time = time.time()
@@ -368,7 +142,6 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
                     'LR': 0,
                 })
         counter+=1
-        #print("after everythibng  :")
     logger.info('==> Top1: %.3f    Top5: %.3f    Loss: %.3f\n',
                 top1.avg, top5.avg, losses.avg)
     return top1.avg, top5.avg, losses.avg
