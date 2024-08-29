@@ -28,7 +28,6 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
-a_optimizer_lr=main.a_opt_lr
 
 def train(train_loader, model, criterion, optimizer, lr_scheduler, epoch, monitors, args):
     losses = AverageMeter()
@@ -104,7 +103,11 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
     for batch_idx, (inputs, targets) in enumerate(train_loader):        
         mw.begin_w()
         
-        
+        if batch_idx == 1:
+            print(f"Batch {batch_idx+1}:")
+            print(t.flatten(inputs)[0])
+            print(t.flatten(targets)[0])
+            print("----------")
         inputs = inputs.to(args.device.type)
         targets = targets.to(args.device.type)
 
