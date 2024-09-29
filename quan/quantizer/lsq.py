@@ -103,6 +103,10 @@ class LsqQuan(Quantizer):
                 # signed weight/activation is quantized to [-2^(b-1), 2^(b-1)-1]
                 self.thd_neg = - 2 ** (bit - 1)
                 self.thd_pos = 2 ** (bit - 1) - 1
+        isBinary=True
+        if isBinary:
+            self.thd_neg = 0
+            self.thd_pos = 1
 
         self.per_channel = per_channel
         self.s = t.nn.Parameter(t.ones(1))
@@ -202,7 +206,6 @@ class LsqQuan(Quantizer):
 
         s_scale = grad_scale(self.s, s_grad_scale)
         
-        
         if self.is_weight:
             x_parallel = x.detach()
             x_parallel = x_parallel / s_scale
@@ -225,10 +228,13 @@ class LsqQuan(Quantizer):
             else:
                 x = Clamp_STE.apply(x,x_parallel, self.thd_neg, self.thd_pos,self.a[int(math.floor(self.counter/self.num_share_params)%(self.T/self.num_share_params))])
             x = round_pass(x)
+
+            print("bef",x)
             x = x * s_scale
             x = split_grad.apply(x,x_prev,self.v_hat)
             
             self.counter+=1
+            print("aft",x)
 
         return x
     
@@ -277,6 +283,7 @@ class LsqQuan(Quantizer):
         #elif self.num_solution == 1.5 or self.num_solution == 6:
         #    return self.forward_delayed_updates_meta_quant(x)
         elif self.num_solution == 2 or self.num_solution == 7 or self.num_solution == 10 or self.num_solution == 11:
+            print("herererer")
             return self.forward_all_times( x)
         elif self.num_solution == 8:
             return self.forward_baseline_no_quant( x)

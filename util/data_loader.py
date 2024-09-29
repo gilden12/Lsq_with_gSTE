@@ -53,8 +53,8 @@ def load_data(cfg):
 
     elif cfg.dataset == 'cifar10':
         train_transform = tv.transforms.Compose([
-            tv.transforms.RandomHorizontalFlip(),
-            tv.transforms.RandomCrop(32, 4),
+            # tv.transforms.RandomHorizontalFlip(),
+            # tv.transforms.RandomCrop(32, 4),
             tv.transforms.ToTensor(),
             tv_normalize
         ])
@@ -64,7 +64,10 @@ def load_data(cfg):
         ])
 
         train_set = tv.datasets.CIFAR10(cfg.path, train=True, transform=train_transform, download=True)
+        #train_set = tv.datasets.CIFAR10(cfg.path, train=True, download=True)
+
         test_set = tv.datasets.CIFAR10(cfg.path, train=False, transform=val_transform, download=True)
+        #test_set = tv.datasets.CIFAR10(cfg.path, train=False, download=True)
 
     else:
         raise ValueError('load_data does not support dataset %s' % cfg.dataset)
