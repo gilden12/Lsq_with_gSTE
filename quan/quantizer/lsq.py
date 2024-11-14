@@ -59,6 +59,21 @@ class Calc_grad_a_STE(InplaceFunction):
         return a*grad_output.detach(), None, None
 
 
+class Calc_grad_a_STE_dupl(InplaceFunction):
+
+    @staticmethod
+    def forward(ctx, x ,x_hat, a,name):
+        ctx.save_for_backward(a)
+        ctx.name=name
+        #ctx.name=name
+        return x
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        a, = ctx.saved_tensors
+        return a*grad_output.detach(),a*grad_output, None, None
+
+
 class Clamp_STE(InplaceFunction):
 
     @staticmethod
@@ -103,12 +118,14 @@ class LsqQuan(Quantizer):
                 # signed weight/activation is quantized to [-2^(b-1), 2^(b-1)-1]
                 self.thd_neg = - 2 ** (bit - 1)
                 self.thd_pos = 2 ** (bit - 1) - 1
-        isBinary=True
+        isBinary=False
         if isBinary:
             self.thd_neg = 0
             self.thd_pos = 1
 
         self.per_channel = per_channel
+        self.x_hat=t.nn.Parameter(t.ones(1))
+
         self.s = t.nn.Parameter(t.ones(1))
         self.a = t.nn.Parameter(t.ones(1))
         self.v_hat = t.nn.Parameter(t.ones(1))
@@ -116,7 +133,6 @@ class LsqQuan(Quantizer):
         self.T=0
         self.counter=0
         self.meta_modules_STE_const = t.nn.Parameter(t.zeros(1))
-        self.x_hat=t.nn.Parameter(t.ones(1))
         self.set_use_last_a_trained=False
     def update_strname(self,strname):
         self.strname=strname
@@ -138,7 +154,7 @@ class LsqQuan(Quantizer):
             self.x_hat=t.nn.Parameter(t.ones(x.size()))
             self.v_hat = t.nn.Parameter(t.ones(x.size()))
             self.num_share_params=1
-            if self.num_solution == 2 or self.num_solution==8 or self.num_solution==9 or self.num_solution==10 or self.num_solution==11:
+            if self.num_solution == 2 or self.num_solution==8 or self.num_solution==9 or self.num_solution==10 or self.num_solution==11 or self.num_solution == 12:
                 
                 if self.a_per == 0:#a per element
                     my_list = [i for i in x.size()]
@@ -150,8 +166,9 @@ class LsqQuan(Quantizer):
 
                 my_list=[math.ceil(self.T/self.num_share_params)]+my_list
                 my_tupel=tuple(my_list)
-                self.a=t.nn.Parameter(t.ones(my_tupel,dtype=t.float16))
-                
+                #self.a=t.nn.Parameter(t.ones(my_tupel,dtype=t.float16))
+                self.a=t.nn.Parameter(t.ones(my_tupel))
+                print("shape self.a : ",self.a.shape,"shape self.x_hat : ",self.x_hat.shape)
             if self.num_solution == 7:
                 meta_copy=copy.deepcopy(self.meta_network)
                 
@@ -229,12 +246,58 @@ class LsqQuan(Quantizer):
                 x = Clamp_STE.apply(x,x_parallel, self.thd_neg, self.thd_pos,self.a[int(math.floor(self.counter/self.num_share_params)%(self.T/self.num_share_params))])
             x = round_pass(x)
 
-            print("bef",x)
+            #print("bef",x)
             x = x * s_scale
             x = split_grad.apply(x,x_prev,self.v_hat)
             
             self.counter+=1
-            print("aft",x)
+            #print("aft",x)
+
+        return x
+    
+    def forward_less_greedy_Updates(self, x):#original forward from lsq
+        if self.per_channel:
+            if self.thd_pos !=0:
+                s_grad_scale = 1.0 / ((self.thd_pos * x.numel()) ** 0.5)
+            else:
+                s_grad_scale=1.0
+        else:
+            if self.thd_pos !=0:
+                s_grad_scale = 1.0 / ((self.thd_pos * x.numel()) ** 0.5)
+            else:
+                s_grad_scale=1.0
+
+        s_scale = grad_scale(self.s, s_grad_scale)
+        
+        if self.is_weight:
+            x_parallel = x.detach()
+            x_parallel = x_parallel / s_scale
+            xdivs_save=x_parallel.detach()
+            x_prev=x.detach()
+            use_ste_end=True
+            
+            if self.set_use_last_a_trained:
+                x = Calc_grad_a_STE_dupl.apply(x,self.a[-2],self.name)
+            else:
+                if int(math.floor(self.counter/self.num_share_params)%(self.T/self.num_share_params)) == int((self.T/self.num_share_params)-1) and use_ste_end==False:
+                    x = Calc_grad_a_STE_dupl.apply(x,self.x_hat,self.a[int(math.floor(self.counter/self.num_share_params-1)%(self.T/self.num_share_params))],self.name)
+                else:
+                    x = Calc_grad_a_STE_dupl.apply(x,self.x_hat,self.a[int(math.floor(self.counter/self.num_share_params)%(self.T/self.num_share_params))],self.name)
+            
+
+            x = x / s_scale.detach()
+            if self.num_solution == 7:
+                x = t.clamp(x, self.thd_neg, self.thd_pos)
+            else:
+                x = Clamp_STE.apply(x,x_parallel, self.thd_neg, self.thd_pos,self.a[int(math.floor(self.counter/self.num_share_params)%(self.T/self.num_share_params))])
+            x = round_pass(x)
+
+            #print("bef",x)
+            x = x * s_scale
+            x = split_grad.apply(x,x_prev,self.v_hat)
+            
+            self.counter+=1
+            #print("aft",x)
 
         return x
     
@@ -283,12 +346,14 @@ class LsqQuan(Quantizer):
         #elif self.num_solution == 1.5 or self.num_solution == 6:
         #    return self.forward_delayed_updates_meta_quant(x)
         elif self.num_solution == 2 or self.num_solution == 7 or self.num_solution == 10 or self.num_solution == 11:
-            print("herererer")
+            #print("herererer")
             return self.forward_all_times( x)
         elif self.num_solution == 8:
             return self.forward_baseline_no_quant( x)
         #elif self.num_solution == 9:
         #    return self.forward_all_times_for_MAD( x)
+        elif self.num_solution == 12:
+            return self.forward_less_greedy_Updates( x)
         else:
             print("Solution not defined")
         

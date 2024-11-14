@@ -46,8 +46,14 @@ def save_checkpoint(epoch, arch, model, extras=None, is_best=None, name=None, ou
         t.save(checkpoint, filepath_best)
     logger.info(msg)
 
+def convert_name(name_gdtuo):
+    str_name=name_gdtuo[name_gdtuo.find(".")+1:]
+    str_name=str_name[:str_name.rfind(".")]
+    if str_name.endswith('fn'):
+        str_name=str_name[:str_name.rfind(".")]
+    return str_name
 
-def load_checkpoint(model, chkp_file, model_device=None, strict=False, lean=False):
+def load_checkpoint(model, chkp_file,num_solution,modules_to_quantize,excepts, model_device=None, strict=False, lean=False):
     """Load a pyTorch training checkpoint.
     Args:
         model: the pyTorch model to which we will load the parameters.  You can
@@ -75,15 +81,38 @@ def load_checkpoint(model, chkp_file, model_device=None, strict=False, lean=Fals
     checkpoint_epoch = checkpoint.get('epoch', None)
     start_epoch = checkpoint_epoch + 1 if checkpoint_epoch is not None else 0
 
-    anomalous_keys = model.load_state_dict(checkpoint['state_dict'], strict)
+    #new_state_dict = {k: v for k, v in checkpoint['state_dict'].items() if not (convert_name(k) in modules_to_quantize.keys()) and k.endswith("quan_w_fn.a") and not(convert_name(k) in excepts.keys())}
+    new_state_dict={}     
+    for k, v in checkpoint['state_dict'].items():
+        #print("cjecl ",len(v.shape))
+        if (convert_name(k) in modules_to_quantize.keys()) and k.endswith("quan_w_fn.a") and not(convert_name(k) in excepts.keys()) and len(v.shape)!=2:
+            #print("1")
+            new_state_dict.update({k: checkpoint['state_dict']['.'.join(k.split('.')[:-2])+'.weight'].unsqueeze(0).repeat(186, 1, 1, 1, 1)})
+        elif (convert_name(k) in modules_to_quantize.keys()) and k.endswith("quan_w_fn.a") and not(convert_name(k) in excepts.keys()) and len(v.shape)==2:
+            #print("2")
+            new_state_dict.update({k: checkpoint['state_dict']['.'.join(k.split('.')[:-2])+'.weight'].unsqueeze(0).repeat(186, 1, 1)})
+        else:
+            #print("3")
+            new_state_dict.update({k: v})
+    
+    #new_state_dict.update({k: checkpoint['state_dict']['.'.join(k.split('.')[:-2])+'.weight'].unsqueeze(0).repeat(186, 1, 1, 1, 1) for k, v in checkpoint['state_dict'].items() if (convert_name(k) in modules_to_quantize.keys()) and k.endswith("quan_w_fn.a") and not(convert_name(k) in excepts.keys()) and len(v.shape)!=2})
+    
+    #new_state_dict.update({k: checkpoint['state_dict']['.'.join(k.split('.')[:-2])+'.weight'].unsqueeze(0).repeat(186, 1, 1) for k, v in checkpoint['state_dict'].items() if (convert_name(k) in modules_to_quantize.keys()) and k.endswith("quan_w_fn.a") and not(convert_name(k) in excepts.keys()) and len(v.shape)==2})
+
+    #new_state_dict.update({k: t.ones(1) for k, v in checkpoint['state_dict'].items() if k.endswith("quan_w_fn.a")})
+
+    anomalous_keys = model.load_state_dict(new_state_dict, strict)
+    print("after")
     if anomalous_keys:
         missing_keys, unexpected_keys = anomalous_keys
         if unexpected_keys:
             logger.warning("The loaded checkpoint (%s) contains %d unexpected state keys" %
                            (chkp_file, len(unexpected_keys)))
         if missing_keys:
+            print("missing keys ",missing_keys)
             raise ValueError("The loaded checkpoint (%s) is missing %d state keys" %
                              (chkp_file, len(missing_keys)))
+        
 
     if model_device is not None:
         model.to(model_device)

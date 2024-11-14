@@ -52,9 +52,10 @@ seed = 0
 # 9 - Training all times together with MAD instead of STE
 #10 - Training all times together and then taking the last trained a value and keep training with its value without learning a
 #11 - Training all times together for x epochs then taking the learned values and training them again all times together to find the following x epochs
+#12 - less_greedy_Updates which is the method proposed in the Test by Daniel
 num_solution = 11
 #The learning rate   set used to train the a parameters
-a_lr = 0.001
+a_lr = 1e1
 #Decides how many diffrent a parameters for each weight
 #0 - a per element, every element in the weight gets a repective a parameter
 #1 - a per layer, every weight gets one a parameter
@@ -63,7 +64,7 @@ a_per=0
 #if grouping together multiple a values to be a shared parameter to reduce memory consuption this sets the amount of parameter together each time else set 1
 num_share_params=1
 #In all time todgether training this sets the amount of epochs learned before startin learning from screatch
-num_of_epochs_each_time = 5
+num_of_epochs_each_time = 1
 
 def main():
     print("Num solution is : ",num_solution)
@@ -146,6 +147,9 @@ def main():
     #    main_DelayedUpdates_meta_network_all_time(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir)
     elif num_solution == 11:
         main_all_times_repeat(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir,T,num_of_epochs_each_time)
+    elif num_solution == 12:
+        main_all_times_less_greedy(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir,T,num_of_epochs_each_time)
+
 def main_original(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir):
 
     # optimizer = t.optim.Adam(model.parameters(), lr=args.optimizer.learning_rate)
@@ -163,6 +167,7 @@ def main_original(model,args,modules_to_replace_temp,train_loader,logger,test_lo
     perf_scoreboard = process.PerformanceScoreboard(args.log.num_best_scores)
     t_top1_list=[]
     v_top1_list=[]
+    test_list=[]
     if args.eval:
         process.validate(test_loader, model, criterion, -1, monitors, args)
     else:  # training
@@ -195,7 +200,7 @@ def main_original(model,args,modules_to_replace_temp,train_loader,logger,test_lo
 
             v_top1_2, v_top5_2, v_loss_2 = process.validate(test_loader, model, criterion, epoch, monitors, args)
             print("two vals : ",v_top1,v_top1_2)
-            
+            test_list.append(v_top1_2)
             t_top1_list.append(t_top1)
             v_top1_list.append(v_top1)
             tbmonitor.writer.add_scalars('Train_vs_Validation/Loss', {'train': t_loss, 'val': v_loss}, epoch)
@@ -207,7 +212,7 @@ def main_original(model,args,modules_to_replace_temp,train_loader,logger,test_lo
             util.save_checkpoint(epoch, args.arch, model, {'top1': v_top1, 'top5': v_top5}, is_best, args.name, log_dir)
             print("vont_top1_list : ",v_top1_list)
             print("t_top1_list : ",t_top1_list)
-
+            print("test list is : ",test_list)
         logger.info('>>>>>>>> Epoch -1 (final model evaluation)')
         process.validate(test_loader, model, criterion, -1, monitors, args)
 
@@ -245,9 +250,14 @@ def main_all_times_repeat(model,args,modules_to_replace_temp,train_loader,logger
     v_top1_list=[]
     stats_list = []
     a_lr_t=a_lr
+    load_from_prev = True
+    if load_from_prev == True:
+        model, start_epoch, _ = util.load_checkpoint(
+            model, "/home/gild/Lsq_with_gSTE/out/MyProject_20241029-172911/MyProject_best.pth.tar",num_solution,modules_to_replace_temp,args.quan.excepts, args.device.type)
     if num_solution == 11:
         set_random_seed(seed)
         temp_seed=0
+        start_epoch=0
         for seg in range(0,500):
             print(seg," Segment of training, using the optimal weights we found for previous segment")
             model_copy=None
@@ -264,10 +274,14 @@ def main_all_times_repeat(model,args,modules_to_replace_temp,train_loader,logger
 
             perf_scoreboard = process.PerformanceScoreboard(args.log.num_best_scores)
             counter=0
-            
+
             if args.eval:
                 process.validate(test_loader, mw, criterion, -1, monitors, args)
             else:  # training
+                #print("wpwpwpw",args.epochs)
+                take_Best=False
+                best_dict={}
+                best_acc=0
                 for times in range(start_epoch, args.epochs):
                     #print("beg :",t.cuda.memory_summary(device=None, abbreviated=False))
                     set_random_seed(temp_seed)
@@ -282,6 +296,10 @@ def main_all_times_repeat(model,args,modules_to_replace_temp,train_loader,logger
                             outputs = mw.forward(inputs)
                     v_top1, v_top5, v_loss = process.validate(test_loader, mw, criterion, start_epoch, monitors, args)
                     v_top1_list.append(v_top1)
+                    if v_top1>best_acc and take_Best:
+                        print("am here er er er @!$%!#%!#%@!#$@!#@!$!@%$!@%!@")
+                        best_acc=v_top1
+                        best_dict=model.state_dict().copy()
                     torch.save(model.state_dict(), '/home/gild/Lsq_with_gSTE/models_saved/num_sol_'+str(num_solution)+'_lr_'+str(a_lr_t)+"_each_time_"+str(num_of_epochs_each_time)+".pth")
                     
                     prev_model = model.state_dict()
@@ -294,15 +312,21 @@ def main_all_times_repeat(model,args,modules_to_replace_temp,train_loader,logger
                         
                         for name, param in model_new.named_parameters():
                             if counter ==args.epochs-1:
-                                
+                                print("aofbfdalnb;skdaf!@#!@#@!#!@#@!#@!#@!#@!#@!#!@#@!#@!")
                                 restart_a_each_time=True
                                 if restart_a_each_time==True:
                                     if name.endswith('.a'):
                                         param.data.fill_(1.0)
                                     else:
-                                        param.copy_(prev_model[name].detach())
+                                        if take_Best:
+                                            param.copy_(best_dict[name].detach())
+                                        else:
+                                            param.copy_(prev_model[name].detach())
                                 else:
-                                    param.copy_(prev_model[name].detach())
+                                    if take_Best:
+                                            param.copy_(best_dict[name].detach())
+                                    else:
+                                        param.copy_(prev_model[name].detach())
 
 
                             else:
@@ -426,15 +450,12 @@ def main_all_times(model,args,modules_to_replace_temp,train_loader,logger,test_l
         tbmonitor.writer.close()  # close the TensorBoard
         logger.info('Program completed successfully ... exiting ...')
         logger.info('If you have any questions or suggestions, please visit: github.com/zhutmost/lsq-net')
-            
-
-
-
 
 def train_a_all_times(times,val_loader,train_loader,start_epoch,T,criterion,monitors,args,logger,perf_scoreboard,tbmonitor,mw,num_solution,num_of_epochs_each_time,base):
     print(" Starting ",times," time of updating a")
     mw.begin()
-
+    #if num_solution == 12:
+    #    mw.zero_grad_less_greedy()
     mw.zero_grad()
     
     this_training_list=[]
@@ -477,7 +498,122 @@ def train_a_all_times(times,val_loader,train_loader,start_epoch,T,criterion,moni
     #prev_list_train.append(prev_last)
     #print("prev list train is : ",prev_list_train)
     list_train.append(last_train)
-    print("list train is : ",list_train)
+    print("list train is : ",list_train) 
+
+def main_all_times_less_greedy(model,args,modules_to_replace_temp,train_loader,logger,test_loader,criterion,monitors,val_loader,start_epoch,tbmonitor,log_dir,T,num_of_epochs_each_time):
+    torch.backends.cudnn.deterministic = True
+    
+    v_top1_list=[]
+    stats_list = []
+    a_lr_t=a_lr
+    if num_solution == 12:
+        set_random_seed(seed)
+        temp_seed=0
+        for seg in range(0,500):
+            print(seg," Segment of training, using the optimal weights we found for previous segment")
+            model_copy=None
+            model_copy = copy.deepcopy(model)
+
+            optim = SGD_less_greedy_Updates(args.optimizer.learning_rate,0.0,a_lr_t)
+            mw = ModuleWrapper(model, optim, modules_to_replace_temp,args.quan.excepts)
+            mw.initialize()
+
+            perf_scoreboard = process.PerformanceScoreboard(args.log.num_best_scores)
+            counter=0
+            
+            if args.eval:
+                process.validate(test_loader, mw, criterion, -1, monitors, args)
+            else:  # training
+                for times in range(start_epoch, args.epochs):
+                    #print("beg :",t.cuda.memory_summary(device=None, abbreviated=False))
+                    set_random_seed(temp_seed)
+
+                    print(times ," time of finding the optimal weights for this segment")
+                    
+
+                    train_a_all_times(times,val_loader,train_loader,start_epoch,T,criterion,monitors,args,logger,perf_scoreboard,tbmonitor,mw,num_solution,num_of_epochs_each_time,seg)
+                    #recalibrate BN
+                    with t.no_grad():
+                        for inputs, _ in train_loader: 
+                            outputs = mw.forward(inputs)
+                    v_top1, v_top5, v_loss = process.validate(test_loader, mw, criterion, start_epoch, monitors, args)
+                    v_top1_list.append(v_top1)
+                    torch.save(model.state_dict(), '/home/gild/Lsq_with_gSTE/models_saved/num_sol_'+str(num_solution)+'_lr_'+str(a_lr_t)+"_each_time_"+str(num_of_epochs_each_time)+".pth")
+                    
+                    prev_model = model.state_dict()
+                    #print("befdeepcopy :",t.cuda.memory_summary(device=None, abbreviated=False))
+
+                    model_new= copy.deepcopy(model_copy)
+                    #print("aftdeepcopy :",t.cuda.memory_summary(device=None, abbreviated=False))
+
+                    
+                    with torch.no_grad():#saving trained a values between iterations
+                        flag=0
+                        
+                        for name, param in model_new.named_parameters():
+                            if counter ==args.epochs-1:
+                                
+                                restart_a_each_time=True
+                                if restart_a_each_time==True:
+                                    if name.endswith('.a'):
+                                        param.data.fill_(1.0)
+                                    else:
+                                        param.copy_(prev_model[name].detach())
+                                else:
+                                    param.copy_(prev_model[name].detach())
+
+                            else:
+                                if name.endswith('.a'):
+                                    #torch.where(param.data-prev_model[name].data!=0,,)
+                                    diff=param.data-prev_model[name].data
+                                    #print("diffrence between previous a and current a: ",diff[diff!=0])
+                                    #if non_zero_statistics(diff)['count'] != 0:
+                                        #print("Statistics of the change in a : ",non_zero_statistics(diff))
+                                        #print("Statistics of a : ",non_zero_statistics(param.data))
+                                        #stats_list.append(non_zero_statistics(diff))
+                                    param.copy_(prev_model[name].detach())
+                                    print("model_new.state_dict()[name].detach() ",model_new.state_dict()[name].detach().sum()," prev_model[name].detach() ", prev_model[name].detach().sum())
+                                    diff = torch.abs(model_new.state_dict()[name].detach() - prev_model[name].detach())
+                                    print("Max difference:", torch.max(diff), " name is : ",name)
+                                    assert torch.allclose(model_new.state_dict()[name].detach().to(prev_model[name].dtype), prev_model[name].detach())
+                                    if flag==1:
+                                        
+                                        tensor_histogram(param.cpu())
+                                    flag+=1
+                                else:
+                                    reset_weights=True
+                                    if reset_weights==False:
+                                        param.copy_(prev_model[name].detach())
+                    
+                    #v_top1, v_top5, v_loss = process.validate(test_loader, mw, criterion, start_epoch, monitors, args)
+
+                    counter+=1
+                    #print("mid :",t.cuda.memory_summary(device=None, abbreviated=False))
+
+                    model=None
+                    model=model_new
+                    
+                    
+                    optim = SGD_less_greedy_Updates(args.optimizer.learning_rate,0.0,a_lr_t)
+                    
+                    mw = ModuleWrapper(model_new, optim, modules_to_replace_temp,args.quan.excepts)
+
+                    mw.initialize()
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    print("v_top1_list on train : ",v_top1_list)
+                    #print("stats list ",stats_list)
+                    #print("end",t.cuda.memory_summary(device=None, abbreviated=False))
+            temp_seed+=1
+
+        logger.info('>>>>>>>> Epoch -1 (final model evaluation)')
+        process.validate(test_loader, mw, criterion, -1, monitors, args)
+
+        tbmonitor.writer.close()  # close the TensorBoard
+        logger.info('Program completed successfully ... exiting ...')
+
+
+
 
 def tensor_histogram(tensor):
     # Convert the tensor to a numpy array

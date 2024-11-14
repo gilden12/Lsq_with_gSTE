@@ -129,9 +129,13 @@ def train_all_times(train_loader, model,num_solution,T, criterion, epoch, monito
         mw.zero_grad_not_a()
         
         loss.backward(create_graph=True)
-            
         mw.step_w()
-            
+        #print("after step w :",t.cuda.memory_summary(device=None, abbreviated=False))
+
+        #mw.step_a()
+        #mw.zero_grad()
+        #if counter ==10:
+        #    mw.step_a()
         batch_time.update(time.time() - end_time)
         end_time = time.time()
         
